@@ -461,8 +461,14 @@ function render(){
   updateFlowstrip();
   renderStats();
   const m=document.getElementById('main');
+  const prevScroller=m.querySelector('.scroller');
+  const prevScrollLeft=prevScroller?prevScroller.scrollLeft:null;
   m.innerHTML='';
   m.appendChild(view==='time'?buildTimeline():buildBoard());
+  if(prevScrollLeft!==null){
+    const sc=m.querySelector('.scroller');
+    if(sc) sc.scrollLeft=prevScrollLeft;
+  }
 }
 function updateFlowstrip(){
   const el=document.querySelector('.flowstrip');
