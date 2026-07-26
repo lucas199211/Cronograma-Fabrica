@@ -2,7 +2,7 @@
 
 Quadro de planejamento e dimensionamento — Fábrica de Proteína Hidrolisada.
 
-🔗 **Projeto:** https://projeto-proteinas.vercel.app
+🔗 **Projeto:** https://cronograma-fabrica.vercel.app
 
 ## Arquivos
 
