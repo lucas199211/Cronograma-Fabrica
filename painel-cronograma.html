@@ -404,10 +404,28 @@ function save(){
 }
 
 /* ============================ autenticação ============================ */
+const LASTSEEN_KEY='cronograma-planta-lastseen';
+const SESSION_TTL=10*60*1000;
+function touchSession(){
+  try{ localStorage.setItem(LASTSEEN_KEY,String(Date.now())); }catch(e){}
+}
+async function enforceSessionTTL(){
+  let last=0;
+  try{ last=Number(localStorage.getItem(LASTSEEN_KEY)||0); }catch(e){}
+  if(last&&(Date.now()-last)>SESSION_TTL){
+    await db.auth.signOut();
+  }
+}
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) touchSession(); });
+window.addEventListener('pagehide',touchSession);
+window.addEventListener('beforeunload',touchSession);
+setInterval(touchSession,20000);
 async function ensureAuth(){
+  await enforceSessionTTL();
   const {data:{session}}=await db.auth.getSession();
-  if(session) return;
+  if(session){ touchSession(); return; }
   await showGate();
+  touchSession();
 }
 function showGate(){
   return new Promise(resolve=>{
