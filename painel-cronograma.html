@@ -887,6 +887,25 @@ function openDrawer(id){
       <button class="danger" id="fDel" type="button">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
+  // máscara: digitando só números (ex: 22102026) as barras dd/mm/aaaa
+  // aparecem sozinhas, sem precisar digitar "/". Ao apagar bem em cima de uma
+  // barra ela pode reaparecer sozinha (limitação aceitável) — pra corrigir um
+  // pedaço da data, apague os dígitos, não a barra.
+  const maskDate=el=>el.addEventListener('input',()=>{
+    const pos=el.selectionStart;
+    const digitsBefore=el.value.slice(0,pos).replace(/\D/g,'').length;
+    const digits=el.value.replace(/\D/g,'').slice(0,8);
+    if(digits.length>4) el.value=digits.slice(0,2)+'/'+digits.slice(2,4)+'/'+digits.slice(4);
+    else if(digits.length>2) el.value=digits.slice(0,2)+'/'+digits.slice(2);
+    else el.value=digits;
+    let newPos=digitsBefore;
+    if(digitsBefore>2) newPos++;
+    if(digitsBefore>4) newPos++;
+    el.setSelectionRange(newPos,newPos);
+  });
+  maskDate(d.querySelector('#fIni'));
+  maskDate(d.querySelector('#fFim'));
+
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
     const b=e.target.closest('button');if(!b)return;
