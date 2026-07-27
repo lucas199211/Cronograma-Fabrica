@@ -422,14 +422,20 @@ async function load(){
 }
 let saveT=null;
 async function saveNow(){
+  // IMPORTANTE: nada de "await" antes desta linha. A sincronização em tempo
+  // real (mais abaixo) troca a variável "state" inteira quando chega uma
+  // atualização de outra aba/salvamento periódico. Se houvesse uma espera
+  // (ex.: verificar a sessão de login) antes de ler "state" aqui, uma
+  // atualização podia chegar nesse meio-tempo e trocar "state" ANTES da
+  // gente conseguir gravar — aí o que ia pro servidor era a versão antiga,
+  // sem a edição que a pessoa acabou de fazer (foi exatamente esse o bug:
+  // a caixa fechava "com sucesso" mas gravava dados desatualizados).
+  // Por isso capturamos a referência de "state" já na primeira linha,
+  // de forma síncrona, antes de qualquer await.
+  const snapshot=state;
   try{
-    const {data:{session}}=await db.auth.getSession();
-    if(!session){
-      alert('SALVAMENTO FALHOU: sessão não autenticada (você foi desconectado). Recarregue a página (F5) e faça login de novo antes de editar.');
-      return false;
-    }
     const {error}=await db.from('cronograma_state')
-      .upsert({id:1,data:state,updated_at:new Date().toISOString()});
+      .upsert({id:1,data:snapshot,updated_at:new Date().toISOString()});
     if(error){
       alert('SALVAMENTO FALHOU: '+error.message+' (código: '+(error.code||'?')+')');
       return false;
@@ -895,9 +901,7 @@ function openDrawer(id){
     <div class="f"><label>Atividade</label><input id="fNome" value="${esc(a.nome)}"></div>
     <div class="f"><label>Fase</label><select id="fFase">${
       PHASES.map((p,i)=>`<option value="${i}" ${i===a.fase?'selected':''}>${esc(p.n)}</option>`).join('')}</select></div>
-    <div class="f"><label for="fResp">Responsável</label><input id="fResp" list="respList" value="${esc(a.resp||'')}" placeholder="quem toca isso">
-      <datalist id="respList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
-    </div>
+    <div class="f"><label for="fResp">Responsável</label><input id="fResp" value="${esc(a.resp||'')}" placeholder="quem toca isso"></div>
     <div class="f"><label>Início (dd/mm/aaaa)</label><input id="fIni" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.ini))}"></div>
     <div class="f"><label>Prazo (dd/mm/aaaa)</label><input id="fFim" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.fim))}"></div>
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
@@ -909,6 +913,27 @@ function openDrawer(id){
       <button class="danger" id="fDel" type="button">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
+  // ao entrar no campo (clique ou vindo do anterior via Enter) seleciona todo
+  // o texto, pra digitar por cima substituir em vez de misturar com o que já tinha
+  d.querySelectorAll('#fNome,#fResp,#fIni,#fFim').forEach(el=>{
+    el.addEventListener('focus',()=>el.select());
+  });
+  // máscara: digitando só números (ex: 22102026) as barras dd/mm/aaaa
+  // aparecem sozinhas, sem precisar digitar "/"
+  const maskDate=el=>el.addEventListener('input',()=>{
+    const pos=el.selectionStart;
+    const digitsBefore=el.value.slice(0,pos).replace(/\D/g,'').length;
+    const digits=el.value.replace(/\D/g,'').slice(0,8);
+    if(digits.length>4) el.value=digits.slice(0,2)+'/'+digits.slice(2,4)+'/'+digits.slice(4);
+    else if(digits.length>2) el.value=digits.slice(0,2)+'/'+digits.slice(2);
+    else el.value=digits;
+    let newPos=digitsBefore;
+    if(digitsBefore>2) newPos++;
+    if(digitsBefore>4) newPos++;
+    el.setSelectionRange(newPos,newPos);
+  });
+  maskDate(d.querySelector('#fIni'));
+  maskDate(d.querySelector('#fFim'));
 
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
@@ -941,9 +966,23 @@ function openDrawer(id){
     const ok=await saveNow();
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
-  // Enter em qualquer campo (menos na Observação, que aceita quebra de linha) salva direto
-  d.querySelectorAll('#fNome,#fResp,#fIni,#fFim,#fFase').forEach(el=>{
-    el.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); doSave(); } });
+  // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo);
+  // do Prazo, Enter vai pro botão Salvar — só ali (ou clicando) é que salva de
+  // verdade e fecha a caixa. Isso evita fechar sem querer no meio do preenchimento.
+  const goNext=(fromSel,toSel)=>{
+    d.querySelector(fromSel).addEventListener('keydown',e=>{
+      if(e.key!=='Enter')return;
+      e.preventDefault();
+      d.querySelector(toSel).focus();
+    });
+  };
+  goNext('#fNome','#fResp');
+  goNext('#fResp','#fIni');
+  goNext('#fIni','#fFim');
+  d.querySelector('#fFim').addEventListener('keydown',e=>{
+    if(e.key!=='Enter')return;
+    e.preventDefault();
+    saveBtn.focus();
   });
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
