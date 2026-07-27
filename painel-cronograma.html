@@ -913,14 +913,6 @@ function openDrawer(id){
       <button class="danger" id="fDel" type="button">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
-  // ao entrar no campo (clique ou vindo do anterior via Enter) seleciona todo
-  // o texto, pra digitar por cima substituir em vez de misturar com o que já tinha.
-  // Datas ficam de fora: com a máscara automática removida, selecionar tudo ao
-  // focar ajudaria a trocar a data inteira mas atrapalha corrigir só um pedaço
-  // (ex: só o dia) — nesses campos o comportamento agora é o padrão do navegador.
-  d.querySelectorAll('#fNome,#fResp').forEach(el=>{
-    el.addEventListener('focus',()=>el.select());
-  });
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
     const b=e.target.closest('button');if(!b)return;
@@ -952,24 +944,6 @@ function openDrawer(id){
     const ok=await saveNow();
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
-  // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo);
-  // do Prazo, Enter vai pro botão Salvar — só ali (ou clicando) é que salva de
-  // verdade e fecha a caixa. Isso evita fechar sem querer no meio do preenchimento.
-  const goNext=(fromSel,toSel)=>{
-    d.querySelector(fromSel).addEventListener('keydown',e=>{
-      if(e.key!=='Enter')return;
-      e.preventDefault();
-      d.querySelector(toSel).focus();
-    });
-  };
-  goNext('#fNome','#fResp');
-  goNext('#fResp','#fIni');
-  goNext('#fIni','#fFim');
-  d.querySelector('#fFim').addEventListener('keydown',e=>{
-    if(e.key!=='Enter')return;
-    e.preventDefault();
-    saveBtn.focus();
-  });
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
 }
