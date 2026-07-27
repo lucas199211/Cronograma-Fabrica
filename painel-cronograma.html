@@ -683,30 +683,26 @@ function buildTimeline(){
         const x=X(t0,s2d(a.ini));
         const dateW=Math.max(zoom*1.2,(diffD(s2d(a.ini),s2d(a.fim))+1)*zoom);
         const iniTxt=fmt(a.ini), fimTxt=fmt(a.fim);
-        const pctTxt=(a.pct||0)>=100?'ok':(a.pct||0)+'%';
-        const minW=textW(iniTxt)+textW(fimTxt)+textW(pctTxt)+40;
+        const minW=textW(iniTxt)+textW(fimTxt)+28;
         const w=Math.max(dateW,minW);
         const bar=document.createElement('div');
         bar.className='bar'+(st==='atrasado'?' late':'');
         bar.style.left=x+'px';bar.style.width=w+'px';
         bar.dataset.id=a.id;
         if(st!=='atrasado'){
-          bar.style.borderColor=ph.c;
-          bar.style.background=ph.c+'2E';
+          bar.style.borderColor='var(--ink-2)';
+          bar.style.background='#626A6822';
           const f=document.createElement('div');
-          f.className='fill';f.style.background=ph.c;f.style.width=(a.pct||0)+'%';
+          f.className='fill';f.style.background='var(--ink-2)';f.style.width=(a.pct||0)+'%';
           f.style.opacity=st==='feito'?'1':'.85';
           bar.appendChild(f);
         }
         // cor de cada rótulo considera se o preenchimento (fill) já cobre
-        // aquele ponto da barra (início ~0%, centro ~50%, fim ~95%+)
+        // aquele ponto da barra (início ~0%, fim ~95%+)
         const colorAt=posPct=>st==='atrasado'?'#fff':((a.pct||0)>=posPct?'#fff':'#163D34');
         const lbStart=document.createElement('span');
         lbStart.className='lbl lbl-start';lbStart.style.color=colorAt(5);lbStart.textContent=iniTxt;
         bar.appendChild(lbStart);
-        const lbPct=document.createElement('span');
-        lbPct.className='lbl lbl-pct';lbPct.style.color=colorAt(50);lbPct.textContent=pctTxt;
-        bar.appendChild(lbPct);
         const lbEnd=document.createElement('span');
         lbEnd.className='lbl lbl-end';lbEnd.style.color=colorAt(95);lbEnd.textContent=fimTxt;
         bar.appendChild(lbEnd);
@@ -933,7 +929,8 @@ function openDrawer(id){
     saveBtn.disabled=true; saveBtn.textContent='Salvando...';
     a.nome=d.querySelector('#fNome').value.trim()||a.nome;
     a.fase=Number(d.querySelector('#fFase').value);
-    a.resp=d.querySelector('#fResp').value.trim();
+    const respRaw=d.querySelector('#fResp').value.trim();
+    a.resp=respRaw?respRaw.charAt(0).toUpperCase()+respRaw.slice(1):respRaw;
     a.ini=parseDateField(d.querySelector('#fIni').value,a.ini);
     a.fim=parseDateField(d.querySelector('#fFim').value,a.fim);
     if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
