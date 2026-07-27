@@ -650,10 +650,11 @@ function buildTimeline(){
         bar.style.left=x+'px';bar.style.width=w+'px';
         bar.dataset.id=a.id;
         if(st!=='atrasado'){
-          bar.style.borderColor=ph.c;
-          bar.style.background=ph.c+'2E';
+          const barColor=st==='feito'?'#163D34':ph.c;
+          bar.style.borderColor=barColor;
+          bar.style.background=barColor+'2E';
           const f=document.createElement('div');
-          f.className='fill';f.style.background=ph.c;f.style.width=(a.pct||0)+'%';
+          f.className='fill';f.style.background=barColor;f.style.width=(a.pct||0)+'%';
           f.style.opacity=st==='feito'?'1':'.85';
           bar.appendChild(f);
         }
