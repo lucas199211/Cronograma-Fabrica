@@ -997,6 +997,15 @@ function syncSeg(){
   const sc=document.querySelector('.scroller');
   if(sc){const {t0}=span();sc.scrollLeft=Math.max(0,X(t0,today())-sc.clientWidth*0.25)}
 
+  // Permite rolar a timeline horizontalmente com a roda do mouse (hoje só dá pra
+  // arrastar a barra de rolagem); delega no #main pois o .scroller é recriado a cada render
+  document.getElementById('main').addEventListener('wheel', e=>{
+    const scroller=e.target.closest('.scroller');
+    if(!scroller || e.deltaY===0) return;
+    e.preventDefault();
+    scroller.scrollLeft+=e.deltaY;
+  }, {passive:false});
+
   db.channel('cronograma_state_sync')
     .on('postgres_changes',{event:'*',schema:'public',table:'cronograma_state',filter:'id=eq.1'},payload=>{
       if(!payload.new||!payload.new.data)return;
