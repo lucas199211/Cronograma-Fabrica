@@ -109,6 +109,7 @@ h1{
 .wtick{position:absolute;top:0;bottom:0;border-left:1px solid var(--line-2)}
 .gridline{position:absolute;top:0;bottom:0;border-left:1px solid var(--line-2);pointer-events:none}
 .gridline.month{border-left-color:var(--line)}
+.gridline.five{border-left-style:dashed;opacity:.55}
 
 .phaseRail{
   height:32px;box-sizing:border-box;background:var(--panel-2);
@@ -612,6 +613,10 @@ function buildTimeline(){
     if(zoom>=8){
       let d=new Date(t0);
       while(d<t1){ if(d.getDay()===1) h+=`<div class="gridline" style="left:${X(t0,d)}px"></div>`; d=addD(d,1); }
+      // escala auxiliar de 5 em 5 dias (contando a partir do início visível),
+      // pra dar uma referência de distância ao olhar a régua
+      let d5=new Date(t0),i5=0;
+      while(d5<t1){ if(i5%5===0) h+=`<div class="gridline five" style="left:${X(t0,d5)}px"></div>`; d5=addD(d5,1); i5++; }
     }
     h+=`<div class="today" style="left:${X(t0,today())}px"></div>`;
     return h;
