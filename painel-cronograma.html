@@ -168,9 +168,13 @@ h1{
 .bar:active{cursor:grabbing}
 .bar .fill{position:absolute;left:0;top:0;bottom:0}
 .bar .lbl{
-  position:relative;font-family:var(--mono);font-size:9.5px;font-weight:500;
-  padding:0 6px;white-space:nowrap;pointer-events:none;
+  position:absolute;top:50%;transform:translateY(-50%);
+  font-family:var(--mono);font-size:9.5px;font-weight:500;
+  white-space:nowrap;pointer-events:none;
 }
+.bar .lbl-start{left:6px}
+.bar .lbl-end{right:6px}
+.bar .lbl-pct{left:50%;transform:translate(-50%,-50%);font-weight:700}
 .bar .grip{position:absolute;right:0;top:0;bottom:0;width:9px;cursor:ew-resize}
 .bar .grip::after{content:'';position:absolute;right:3px;top:5px;bottom:5px;width:2px;background:currentColor;opacity:.5}
 .bar.late{
@@ -678,8 +682,10 @@ function buildTimeline(){
       if(a.ini&&a.fim){
         const x=X(t0,s2d(a.ini));
         const dateW=Math.max(zoom*1.2,(diffD(s2d(a.ini),s2d(a.fim))+1)*zoom);
-        const lblTxt=(a.pct||0)>0?(a.pct>=100?'ok':a.pct+'%'):fmt(a.ini);
-        const w=Math.max(dateW,textW(lblTxt)+22);
+        const iniTxt=fmt(a.ini), fimTxt=fmt(a.fim);
+        const pctTxt=(a.pct||0)>=100?'ok':(a.pct||0)+'%';
+        const minW=textW(iniTxt)+textW(fimTxt)+textW(pctTxt)+40;
+        const w=Math.max(dateW,minW);
         const bar=document.createElement('div');
         bar.className='bar'+(st==='atrasado'?' late':'');
         bar.style.left=x+'px';bar.style.width=w+'px';
@@ -692,11 +698,18 @@ function buildTimeline(){
           f.style.opacity=st==='feito'?'1':'.85';
           bar.appendChild(f);
         }
-        const lb=document.createElement('span');
-        lb.className='lbl';
-        lb.style.color=st==='atrasado'?'#fff':((a.pct||0)>55?'#fff':'#163D34');
-        lb.textContent=lblTxt;
-        bar.appendChild(lb);
+        // cor de cada rótulo considera se o preenchimento (fill) já cobre
+        // aquele ponto da barra (início ~0%, centro ~50%, fim ~95%+)
+        const colorAt=posPct=>st==='atrasado'?'#fff':((a.pct||0)>=posPct?'#fff':'#163D34');
+        const lbStart=document.createElement('span');
+        lbStart.className='lbl lbl-start';lbStart.style.color=colorAt(5);lbStart.textContent=iniTxt;
+        bar.appendChild(lbStart);
+        const lbPct=document.createElement('span');
+        lbPct.className='lbl lbl-pct';lbPct.style.color=colorAt(50);lbPct.textContent=pctTxt;
+        bar.appendChild(lbPct);
+        const lbEnd=document.createElement('span');
+        lbEnd.className='lbl lbl-end';lbEnd.style.color=colorAt(95);lbEnd.textContent=fimTxt;
+        bar.appendChild(lbEnd);
         const g=document.createElement('div');g.className='grip';g.dataset.grip='1';bar.appendChild(g);
         lane.appendChild(bar);
         if(st==='atrasado'){
