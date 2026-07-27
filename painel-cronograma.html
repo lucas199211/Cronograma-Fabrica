@@ -393,52 +393,13 @@ async function load(){
   return data?data.data:null;
 }
 let saveT=null;
-// Como várias pessoas/dispositivos podem ter o painel aberto ao mesmo tempo,
-// salvar o estado inteiro "por cima" pode apagar uma edição concorrente feita
-// em outra máquina entre o momento em que carregamos e o momento em que
-// gravamos (inclusive se chegar uma atualização em tempo real bem no meio do
-// debounce de 350ms, o que troca a referência de state.acts). Por isso
-// guardamos uma FOTO da própria edição (pendingEdits) em vez de confiar que
-// state.acts ainda vai conter a mudança na hora de salvar — assim, na hora de
-// gravar, usamos a versão mais recente do servidor para tudo que esta aba não
-// tocou, e só sobrepomos com a foto local as atividades que esta aba editou.
-let pendingEdits=new Map();
-let pendingDeletes=new Set();
-function markDirty(id){
-  if(!id) return;
-  const a=state.acts.find(x=>x.id===id);
-  if(a){ pendingEdits.set(id,{...a}); pendingDeletes.delete(id); }
-}
-function markDeleted(id){ if(id){ pendingDeletes.add(id); pendingEdits.delete(id); } }
-
 async function saveNow(){
-  const editsToApply=new Map(pendingEdits);
-  const deletesToApply=new Set(pendingDeletes);
-  try{
-    const {data:latest}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
-    if(latest && latest.data && Array.isArray(latest.data.acts)){
-      const serverMap=new Map(latest.data.acts.map(x=>[x.id,x]));
-      const localMap=new Map(state.acts.map(x=>[x.id,x]));
-      const ids=new Set([...serverMap.keys(),...localMap.keys(),...editsToApply.keys()]);
-      const merged=[];
-      ids.forEach(id=>{
-        if(deletesToApply.has(id)) return;
-        if(editsToApply.has(id)){ merged.push(editsToApply.get(id)); return; }
-        if(serverMap.has(id)){ merged.push(serverMap.get(id)); return; }
-        if(localMap.has(id)) merged.push(localMap.get(id));
-      });
-      state.acts=merged;
-    }
-  }catch(e){ console.error('não deu para mesclar com o servidor antes de salvar:', e); }
   const {error}=await db.from('cronograma_state')
     .upsert({id:1,data:state,updated_at:new Date().toISOString()});
   if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
-  editsToApply.forEach((_,id)=>pendingEdits.delete(id));
-  deletesToApply.forEach(id=>pendingDeletes.delete(id));
   return true;
 }
-function save(id){
-  markDirty(id);
+function save(){
   clearTimeout(saveT);
   saveT=setTimeout(saveNow,350);
 }
@@ -682,7 +643,7 @@ function buildTimeline(){
       if(st==='semdata'){
         const b=document.createElement('button');
         b.className='setdate';b.textContent='+ data';
-        b.onclick=()=>{a.ini=d2s(today());a.fim=d2s(addD(today(),7));save(a.id);render()};
+        b.onclick=()=>{a.ini=d2s(today());a.fim=d2s(addD(today(),7));save();render()};
         rail.appendChild(b);
       }
       railcol.appendChild(rail);
@@ -739,7 +700,7 @@ function buildTimeline(){
           if(e.key==='Enter'&&inp.value.trim()){
             const newId=uid();
             state.acts.push({id:newId,fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:''});
-            save(newId);render();
+            save();render();
           }
           if(e.key==='Escape') render();
         };
@@ -822,7 +783,7 @@ function attachDrag(root,t0){
         if(nf<s2d(a.ini)) nf=s2d(a.ini);
         a.fim=d2s(nf);
       }
-      save(a.id);render();
+      save();render();
     }
     drag=null;
   };
@@ -872,7 +833,7 @@ function buildBoard(){
       if(!a)return;
       a.pct=Number(col.dataset.pct);
       if(a.pct>0&&!a.ini){a.ini=d2s(today());a.fim=d2s(addD(today(),7))}
-      save(a.id);render();
+      save();render();
     };
     b.appendChild(col);
   });
@@ -922,11 +883,11 @@ function openDrawer(id){
     if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
     a.pct=pct;
     a.nota=d.querySelector('#fNota').value;
-    save(a.id);closeDrawer();render();
+    save();closeDrawer();render();
   };
   d.querySelector('#fDel').onclick=()=>{
     state.acts=state.acts.filter(x=>x.id!==id);
-    markDeleted(id);save();closeDrawer();render();toast('Atividade excluída');
+    save();closeDrawer();render();toast('Atividade excluída');
   };
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
