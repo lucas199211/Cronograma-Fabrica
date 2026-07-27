@@ -952,6 +952,25 @@ function openDrawer(id){
     const ok=await saveNow(state);
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
+  // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo);
+  // do Prazo, Enter vai pro botão Salvar — só ali (ou clicando) é que salva de
+  // verdade e fecha a caixa. Assim dá pra preencher tudo só pelo teclado sem
+  // fechar a caixa sem querer no meio do preenchimento.
+  const goNext=(fromSel,toSel)=>{
+    d.querySelector(fromSel).addEventListener('keydown',e=>{
+      if(e.key!=='Enter')return;
+      e.preventDefault();
+      d.querySelector(toSel).focus();
+    });
+  };
+  goNext('#fNome','#fResp');
+  goNext('#fResp','#fIni');
+  goNext('#fIni','#fFim');
+  d.querySelector('#fFim').addEventListener('keydown',e=>{
+    if(e.key!=='Enter')return;
+    e.preventDefault();
+    saveBtn.focus();
+  });
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
 }
