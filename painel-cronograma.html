@@ -394,6 +394,9 @@ function parseDateField(txt,fallback){
   const t=txt.trim();
   if(!t) return '';
   const iso=brToISO(t);
+  if(iso===null){
+    alert('DATA NÃO RECONHECIDA: "'+t+'" não está no formato dd/mm/aaaa. Mantendo a data anterior ('+(fallback||'vazia')+').');
+  }
   return iso!==null?iso:(fallback||'');
 }
 
