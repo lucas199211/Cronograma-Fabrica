@@ -392,15 +392,24 @@ async function load(){
   return data?data.data:null;
 }
 let saveT=null;
-async function saveNow(){
+async function saveNow(dataToSave){
+  // Usa o retrato de "state" tirado no momento do clique/edição (dataToSave),
+  // não o "state" atual — porque a sincronização em tempo real (mais abaixo)
+  // troca a variável "state" inteira sempre que qualquer mudança chega do
+  // servidor. Se essa troca acontecesse durante os 350ms de espera do
+  // save(), a gravação usaria dados sem a edição que a pessoa acabou de
+  // fazer, mesmo sem dar erro nenhum — era exatamente essa a causa do
+  // "às vezes salva, às vezes não".
+  const payload=dataToSave||state;
   const {error}=await db.from('cronograma_state')
-    .upsert({id:1,data:state,updated_at:new Date().toISOString()});
+    .upsert({id:1,data:payload,updated_at:new Date().toISOString()});
   if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
   return true;
 }
 function save(){
+  const snapshot=state;
   clearTimeout(saveT);
-  saveT=setTimeout(saveNow,350);
+  saveT=setTimeout(()=>saveNow(snapshot),350);
 }
 
 /* ============================ autenticação ============================ */
