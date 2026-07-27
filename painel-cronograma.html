@@ -442,6 +442,9 @@ function save(){
   clearTimeout(saveT);
   saveT=setTimeout(()=>saveNow(snapshot),350);
 }
+// Salvamento periódico de segurança: garante persistência mesmo se algum
+// fluxo de edição não tiver chamado save() corretamente
+setInterval(()=>saveNow(state),60000);
 
 /* ============================ autenticação ============================ */
 const LASTSEEN_KEY='cronograma-planta-lastseen';
