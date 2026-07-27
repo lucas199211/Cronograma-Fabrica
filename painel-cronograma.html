@@ -419,10 +419,23 @@ async function load(){
 }
 let saveT=null;
 async function saveNow(){
-  const {error}=await db.from('cronograma_state')
-    .upsert({id:1,data:state,updated_at:new Date().toISOString()});
-  if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
-  return true;
+  try{
+    const {data:{session}}=await db.auth.getSession();
+    if(!session){
+      alert('SALVAMENTO FALHOU: sessão não autenticada (você foi desconectado). Recarregue a página (F5) e faça login de novo antes de editar.');
+      return false;
+    }
+    const {error}=await db.from('cronograma_state')
+      .upsert({id:1,data:state,updated_at:new Date().toISOString()});
+    if(error){
+      alert('SALVAMENTO FALHOU: '+error.message+' (código: '+(error.code||'?')+')');
+      return false;
+    }
+    return true;
+  }catch(e){
+    alert('SALVAMENTO FALHOU (erro inesperado): '+(e&&e.message?e.message:e));
+    return false;
+  }
 }
 function save(){
   clearTimeout(saveT);
