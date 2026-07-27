@@ -898,6 +898,7 @@ function openDrawer(id){
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
       <button class="solid" id="fSave" type="button">Salvar</button>
+      <button class="ghost" id="fClear" type="button">Limpar</button>
       <button class="danger" id="fDel" type="button">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
@@ -925,6 +926,17 @@ function openDrawer(id){
     const b=e.target.closest('button');if(!b)return;
     pct=Number(b.dataset.v);
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
+  };
+  // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
+  // andamento, observação) — mantém nome e fase, que identificam a atividade
+  d.querySelector('#fClear').onclick=()=>{
+    d.querySelector('#fResp').value='';
+    d.querySelector('#fIni').value='';
+    d.querySelector('#fFim').value='';
+    d.querySelector('#fNota').value='';
+    pct=0;
+    [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===0));
+    d.querySelector('#fResp').focus();
   };
   const saveBtn=d.querySelector('#fSave');
   // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
