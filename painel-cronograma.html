@@ -114,6 +114,7 @@ h1{
   height:32px;box-sizing:border-box;background:var(--panel-2);
   display:flex;align-items:center;gap:9px;padding:0 12px;
   border-top:1px solid var(--line);border-bottom:1px solid var(--line-2);
+  cursor:pointer;
 }
 .phaseLane{
   height:32px;box-sizing:border-box;background:var(--panel-2);
@@ -402,6 +403,9 @@ function save(){
   clearTimeout(saveT);
   saveT=setTimeout(saveNow,350);
 }
+// Salvamento periódico de segurança: garante persistência mesmo se algum
+// fluxo de edição não tiver chamado save() corretamente
+setInterval(saveNow,60000);
 
 /* ============================ autenticação ============================ */
 const LASTSEEN_KEY='cronograma-planta-lastseen';
@@ -594,6 +598,13 @@ function buildTimeline(){
         <h2 title="Clique para renomear">${esc(ph.n)}</h2>
         <span class="cnt">${done}/${list.length}</span>`;
     pr.querySelector('.collapseBtn').onclick=()=>{
+      if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
+      saveCollapsed();render();
+    };
+    // Clicar em qualquer parte do bloco (menos no título, que serve pra renomear)
+    // também expande/recolhe o grupo, não só na setinha
+    pr.onclick=e=>{
+      if(e.target.closest('h2')||e.target.closest('.collapseBtn')||e.target.tagName==='INPUT') return;
       if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
       saveCollapsed();render();
     };
@@ -842,7 +853,7 @@ function openDrawer(id){
     <div class="f"><label>Atividade</label><input id="fNome" value="${esc(a.nome)}"></div>
     <div class="f"><label>Fase</label><select id="fFase">${
       PHASES.map((p,i)=>`<option value="${i}" ${i===a.fase?'selected':''}>${esc(p.n)}</option>`).join('')}</select></div>
-    <div class="f"><label>Responsável</label><input id="fResp" list="respList" value="${esc(a.resp||'')}" placeholder="quem toca isso">
+    <div class="f"><label for="fResp">Responsável</label><input id="fResp" list="respList" value="${esc(a.resp||'')}" placeholder="quem toca isso">
       <datalist id="respList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
     </div>
     <div class="f"><label>Início</label><input type="date" id="fIni" value="${esc(a.ini||'')}"></div>
