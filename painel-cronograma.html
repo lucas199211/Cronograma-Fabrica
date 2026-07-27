@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -114,7 +114,6 @@ h1{
   height:32px;box-sizing:border-box;background:var(--panel-2);
   display:flex;align-items:center;gap:9px;padding:0 12px;
   border-top:1px solid var(--line);border-bottom:1px solid var(--line-2);
-  cursor:pointer;
 }
 .phaseLane{
   height:32px;box-sizing:border-box;background:var(--panel-2);
@@ -372,34 +371,6 @@ function diffD(a,b){return Math.round((b-a)/DAY)}
 function fmt(s){if(!s)return'—';const d=s2d(s);const p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)}
 const MON=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
-// input type="date" nativo segue o idioma do SISTEMA/navegador (não o lang da
-// página), então em máquina com Windows em inglês ele mostra mm/dd/aaaa mesmo
-// com <html lang="pt-BR">. Por isso os campos de data da gaveta usam texto
-// livre no formato brasileiro dd/mm/aaaa, convertido pra ISO (aaaa-mm-dd,
-// o formato usado internamente em todo o resto do código) na hora de salvar.
-function isoToBR(iso){
-  if(!iso) return '';
-  const [y,m,d]=iso.split('-');
-  return d+'/'+m+'/'+y;
-}
-function brToISO(txt){
-  const m=txt.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if(!m) return null;
-  const d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3];
-  return y+'-'+mo+'-'+d;
-}
-// converte o campo pro formato ISO; se estiver vazio limpa a data, se estiver
-// num formato inválido mantém o valor anterior (não deixa o dado corromper)
-function parseDateField(txt,fallback){
-  const t=txt.trim();
-  if(!t) return '';
-  const iso=brToISO(t);
-  if(iso===null){
-    alert('DATA NÃO RECONHECIDA: "'+t+'" não está no formato dd/mm/aaaa. Mantendo a data anterior ('+(fallback||'vazia')+').');
-  }
-  return iso!==null?iso:(fallback||'');
-}
-
 /* ============================ status ============================ */
 function statusOf(a){
   if(!a.ini||!a.fim) return 'semdata';
@@ -422,37 +393,15 @@ async function load(){
 }
 let saveT=null;
 async function saveNow(){
-  // IMPORTANTE: nada de "await" antes desta linha. A sincronização em tempo
-  // real (mais abaixo) troca a variável "state" inteira quando chega uma
-  // atualização de outra aba/salvamento periódico. Se houvesse uma espera
-  // (ex.: verificar a sessão de login) antes de ler "state" aqui, uma
-  // atualização podia chegar nesse meio-tempo e trocar "state" ANTES da
-  // gente conseguir gravar — aí o que ia pro servidor era a versão antiga,
-  // sem a edição que a pessoa acabou de fazer (foi exatamente esse o bug:
-  // a caixa fechava "com sucesso" mas gravava dados desatualizados).
-  // Por isso capturamos a referência de "state" já na primeira linha,
-  // de forma síncrona, antes de qualquer await.
-  const snapshot=state;
-  try{
-    const {error}=await db.from('cronograma_state')
-      .upsert({id:1,data:snapshot,updated_at:new Date().toISOString()});
-    if(error){
-      alert('SALVAMENTO FALHOU: '+error.message+' (código: '+(error.code||'?')+')');
-      return false;
-    }
-    return true;
-  }catch(e){
-    alert('SALVAMENTO FALHOU (erro inesperado): '+(e&&e.message?e.message:e));
-    return false;
-  }
+  const {error}=await db.from('cronograma_state')
+    .upsert({id:1,data:state,updated_at:new Date().toISOString()});
+  if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
+  return true;
 }
 function save(){
   clearTimeout(saveT);
   saveT=setTimeout(saveNow,350);
 }
-// Salvamento periódico de segurança: garante persistência mesmo se algum
-// fluxo de edição não tiver chamado save() corretamente
-setInterval(saveNow,60000);
 
 /* ============================ autenticação ============================ */
 const LASTSEEN_KEY='cronograma-planta-lastseen';
@@ -648,13 +597,6 @@ function buildTimeline(){
       if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
       saveCollapsed();render();
     };
-    // Clicar em qualquer parte do bloco (menos no título, que serve pra renomear)
-    // também expande/recolhe o grupo, não só na setinha
-    pr.onclick=e=>{
-      if(e.target.closest('h2')||e.target.closest('.collapseBtn')||e.target.tagName==='INPUT') return;
-      if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
-      saveCollapsed();render();
-    };
     const h2=pr.querySelector('h2');
     h2.onclick=()=>{
       const inp=document.createElement('input');
@@ -684,7 +626,6 @@ function buildTimeline(){
       rail.className='actRail'+(st==='feito'?' done':'');
       const nb=document.createElement('button');
       nb.className='name';nb.textContent=a.nome;nb.title=a.nome;
-      nb.dataset.id=a.id;
       nb.onclick=()=>openDrawer(a.id);
       rail.appendChild(nb);
       if(a.resp){const w=document.createElement('span');w.className='who';w.textContent=a.resp;rail.appendChild(w)}
@@ -709,11 +650,10 @@ function buildTimeline(){
         bar.style.left=x+'px';bar.style.width=w+'px';
         bar.dataset.id=a.id;
         if(st!=='atrasado'){
-          const barColor=st==='feito'?'#163D34':ph.c;
-          bar.style.borderColor=barColor;
-          bar.style.background=barColor+'2E';
+          bar.style.borderColor=ph.c;
+          bar.style.background=ph.c+'2E';
           const f=document.createElement('div');
-          f.className='fill';f.style.background=barColor;f.style.width=(a.pct||0)+'%';
+          f.className='fill';f.style.background=ph.c;f.style.width=(a.pct||0)+'%';
           f.style.opacity=st==='feito'?'1':'.85';
           bar.appendChild(f);
         }
@@ -746,8 +686,7 @@ function buildTimeline(){
         rl.appendChild(inp);inp.focus();
         inp.onkeydown=e=>{
           if(e.key==='Enter'&&inp.value.trim()){
-            const newId=uid();
-            state.acts.push({id:newId,fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:''});
+            state.acts.push({id:uid(),fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:''});
             save();render();
           }
           if(e.key==='Escape') render();
@@ -898,19 +837,22 @@ function openDrawer(id){
   const d=document.createElement('div');d.className='drawer';
   d.innerHTML=`
     <h3>Editar atividade</h3>
+    <p class="title" id="dTitle">${esc(a.nome)}</p>
     <div class="f"><label>Atividade</label><input id="fNome" value="${esc(a.nome)}"></div>
     <div class="f"><label>Fase</label><select id="fFase">${
       PHASES.map((p,i)=>`<option value="${i}" ${i===a.fase?'selected':''}>${esc(p.n)}</option>`).join('')}</select></div>
-    <div class="f"><label for="fResp">Responsável</label><input id="fResp" value="${esc(a.resp||'')}" placeholder="quem toca isso"></div>
-    <div class="f"><label>Início (dd/mm/aaaa)</label><input id="fIni" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.ini))}"></div>
-    <div class="f"><label>Prazo (dd/mm/aaaa)</label><input id="fFim" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.fim))}"></div>
+    <div class="f"><label>Responsável</label><input id="fResp" list="respList" value="${esc(a.resp||'')}" placeholder="quem toca isso">
+      <datalist id="respList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+    </div>
+    <div class="f"><label>Início</label><input type="date" id="fIni" value="${esc(a.ini||'')}"></div>
+    <div class="f"><label>Prazo</label><input type="date" id="fFim" value="${esc(a.fim||'')}"></div>
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
-      ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
+      ${[0,25,50,75,100].map(v=>`<button data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
-      <button class="solid" id="fSave" type="button">Salvar</button>
-      <button class="danger" id="fDel" type="button">Excluir</button>
+      <button class="solid" id="fSave">Salvar</button>
+      <button class="danger" id="fDel">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
   let pct=a.pct||0;
@@ -919,30 +861,20 @@ function openDrawer(id){
     pct=Number(b.dataset.v);
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
-
-  const saveBtn=d.querySelector('#fSave');
-  // salva de verdade (aguarda o servidor) antes de fechar a caixa — se falhar,
-  // a caixa continua aberta com os dados digitados, nada se perde
-  async function doSave(){
-    saveBtn.disabled=true; saveBtn.textContent='Salvando...';
+  d.querySelector('#fSave').onclick=()=>{
     a.nome=d.querySelector('#fNome').value.trim()||a.nome;
     a.fase=Number(d.querySelector('#fFase').value);
     a.resp=d.querySelector('#fResp').value.trim();
-    a.ini=parseDateField(d.querySelector('#fIni').value,a.ini);
-    a.fim=parseDateField(d.querySelector('#fFim').value,a.fim);
+    a.ini=d.querySelector('#fIni').value;
+    a.fim=d.querySelector('#fFim').value;
     if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
     a.pct=pct;
     a.nota=d.querySelector('#fNota').value;
-    const ok=await saveNow();
-    if(ok){ closeDrawer(); render(); }
-    else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
-  }
-  saveBtn.onclick=doSave;
-  d.querySelector('#fDel').onclick=async()=>{
-    if(!confirm('Excluir esta atividade? Não tem como desfazer.')) return;
+    save();closeDrawer();render();
+  };
+  d.querySelector('#fDel').onclick=()=>{
     state.acts=state.acts.filter(x=>x.id!==id);
-    const ok=await saveNow();
-    if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
+    save();closeDrawer();render();toast('Atividade excluída');
   };
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
@@ -1063,15 +995,6 @@ function syncSeg(){
   render();
   const sc=document.querySelector('.scroller');
   if(sc){const {t0}=span();sc.scrollLeft=Math.max(0,X(t0,today())-sc.clientWidth*0.25)}
-
-  // Permite rolar a timeline horizontalmente com a roda do mouse (hoje só dá pra
-  // arrastar a barra de rolagem); delega no #main pois o .scroller é recriado a cada render
-  document.getElementById('main').addEventListener('wheel', e=>{
-    const scroller=e.target.closest('.scroller');
-    if(!scroller || e.deltaY===0) return;
-    e.preventDefault();
-    scroller.scrollLeft+=e.deltaY;
-  }, {passive:false});
 
   db.channel('cronograma_state_sync')
     .on('postgres_changes',{event:'*',schema:'public',table:'cronograma_state',filter:'id=eq.1'},payload=>{
