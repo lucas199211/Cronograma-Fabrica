@@ -892,52 +892,36 @@ function openDrawer(id){
   const d=document.createElement('div');d.className='drawer';
   d.innerHTML=`
     <h3>Editar atividade</h3>
-    <p class="title" id="dTitle">${esc(a.nome)}</p>
     <div class="f"><label>Atividade</label><input id="fNome" value="${esc(a.nome)}"></div>
     <div class="f"><label>Fase</label><select id="fFase">${
       PHASES.map((p,i)=>`<option value="${i}" ${i===a.fase?'selected':''}>${esc(p.n)}</option>`).join('')}</select></div>
     <div class="f"><label for="fResp">Responsável</label><input id="fResp" list="respList" value="${esc(a.resp||'')}" placeholder="quem toca isso">
       <datalist id="respList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
     </div>
-    <div class="f"><label>Início</label><input id="fIni" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.ini))}"></div>
-    <div class="f"><label>Prazo</label><input id="fFim" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.fim))}"></div>
+    <div class="f"><label>Início (dd/mm/aaaa)</label><input id="fIni" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.ini))}"></div>
+    <div class="f"><label>Prazo (dd/mm/aaaa)</label><input id="fFim" placeholder="dd/mm/aaaa" value="${esc(isoToBR(a.fim))}"></div>
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
-      ${[0,25,50,75,100].map(v=>`<button data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
+      ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
-      <button class="solid" id="fSave">Salvar</button>
-      <button class="danger" id="fDel">Excluir</button>
+      <button class="solid" id="fSave" type="button">Salvar</button>
+      <button class="danger" id="fDel" type="button">Excluir</button>
     </div>`;
   document.body.appendChild(scrim);document.body.appendChild(d);
-  // máscara: digitando só números (ex: 05062026) as barras dd/mm/aaaa
-  // aparecem sozinhas, sem precisar digitar "/"
-  const maskDate=el=>el.addEventListener('input',()=>{
-    const pos=el.selectionStart;
-    const digitsBefore=el.value.slice(0,pos).replace(/\D/g,'').length;
-    const digits=el.value.replace(/\D/g,'').slice(0,8);
-    if(digits.length>4) el.value=digits.slice(0,2)+'/'+digits.slice(2,4)+'/'+digits.slice(4);
-    else if(digits.length>2) el.value=digits.slice(0,2)+'/'+digits.slice(2);
-    else el.value=digits;
-    let newPos=digitsBefore;
-    if(digitsBefore>2) newPos++;
-    if(digitsBefore>4) newPos++;
-    el.setSelectionRange(newPos,newPos);
-  });
-  // ao entrar no campo (clique ou Tab/Enter vindo do campo anterior) seleciona
-  // tudo, pra digitar por cima já substituir a data inteira em vez de misturar
-  const selectAllOnFocus=el=>el.addEventListener('focus',()=>el.select());
-  selectAllOnFocus(d.querySelector('#fIni'));
-  selectAllOnFocus(d.querySelector('#fFim'));
-  maskDate(d.querySelector('#fIni'));
-  maskDate(d.querySelector('#fFim'));
+
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
     const b=e.target.closest('button');if(!b)return;
     pct=Number(b.dataset.v);
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
-  const commit=()=>{
+
+  const saveBtn=d.querySelector('#fSave');
+  // salva de verdade (aguarda o servidor) antes de fechar a caixa — se falhar,
+  // a caixa continua aberta com os dados digitados, nada se perde
+  async function doSave(){
+    saveBtn.disabled=true; saveBtn.textContent='Salvando...';
     a.nome=d.querySelector('#fNome').value.trim()||a.nome;
     a.fase=Number(d.querySelector('#fFase').value);
     a.resp=d.querySelector('#fResp').value.trim();
@@ -945,46 +929,21 @@ function openDrawer(id){
     a.fim=parseDateField(d.querySelector('#fFim').value,a.fim);
     if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
     a.pct=pct;
-    d.querySelector('#dTitle').textContent=a.nome;
     a.nota=d.querySelector('#fNota').value;
-    save();
-  };
-  d.querySelector('#fSave').onclick=()=>{
-    commit();
-    const ordered=[];
-    PHASES.forEach((ph,pi)=>state.acts.filter(x=>x.fase===pi).forEach(x=>ordered.push(x)));
-    const idx=ordered.findIndex(x=>x.id===a.id);
-    const next=idx>=0?ordered[idx+1]:null;
-    closeDrawer();render();
-    if(next){
-      const btn=document.querySelector('.name[data-id="'+next.id+'"]');
-      if(btn) btn.focus();
-    }
-  };
-  d.querySelector('#fDel').onclick=()=>{
+    const ok=await saveNow();
+    if(ok){ closeDrawer(); render(); }
+    else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
+  }
+  saveBtn.onclick=doSave;
+  d.querySelector('#fDel').onclick=async()=>{
+    if(!confirm('Excluir esta atividade? Não tem como desfazer.')) return;
     state.acts=state.acts.filter(x=>x.id!==id);
-    save();closeDrawer();render();toast('Atividade excluída');
+    const ok=await saveNow();
+    if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
-  // Enter em qualquer campo já salva o que foi digitado até ali e pula pro
-  // próximo campo, sem precisar clicar em "Salvar" a cada etapa
-  const advance=(fromSel,toSel)=>{
-    d.querySelector(fromSel).addEventListener('keydown',e=>{
-      if(e.key!=='Enter')return;
-      e.preventDefault();
-      commit();render();
-      const next=d.querySelector(toSel);
-      if(next) next.focus();
-    });
-  };
-  advance('#fNome','#fResp');
-  advance('#fResp','#fIni');
-  advance('#fIni','#fFim');
-  // do Prazo, Enter pula direto pro botão Salvar (sem passar por Observação);
-  // apertando Enter de novo (botão focado) já salva e abre a próxima atividade
-  d.querySelector('#fFim').addEventListener('keydown',e=>{
-    if(e.key!=='Enter')return;
-    e.preventDefault();
-    d.querySelector('#fSave').focus();
+  // Enter em qualquer campo (menos na Observação, que aceita quebra de linha) salva direto
+  d.querySelectorAll('#fNome,#fResp,#fIni,#fFim,#fFase').forEach(el=>{
+    el.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); doSave(); } });
   });
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
