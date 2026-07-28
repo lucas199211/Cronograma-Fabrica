@@ -140,6 +140,14 @@ h1{
 }
 .collapseBtn[aria-expanded="false"]{transform:rotate(-90deg)}
 .collapseBtn:hover{color:var(--ink)}
+.moveGrp{display:flex;flex-direction:column;flex:0 0 12px}
+.moveBtn{
+  border:0;background:transparent;color:var(--ink-2);font-size:7px;line-height:1;
+  width:12px;height:11px;padding:0;display:flex;align-items:center;justify-content:center;
+}
+.moveBtn:hover{color:var(--ink)}
+.moveBtn:disabled{opacity:.25;cursor:default}
+.moveBtn:disabled:hover{color:var(--ink-2)}
 .addRail.addgroup,.addLane.addgroup{border-top:1px solid var(--line);margin-top:1px}
 .addRail.addgroup .addbtn{color:var(--ink-2);font-weight:600}
 
@@ -571,6 +579,27 @@ function renderStats(){
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
+// PHASES é a mesma referência de state.phases; a.fase guarda o ÍNDICE do
+// grupo na hora. Ao trocar a posição de dois grupos, precisa também trocar
+// esse índice em todas as atividades que apontavam pra eles — senão as
+// atividades "pulam" de grupo ao reordenar.
+function moveGroup(pi,dir){
+  const ni=pi+dir;
+  if(ni<0||ni>=PHASES.length) return;
+  [PHASES[pi],PHASES[ni]]=[PHASES[ni],PHASES[pi]];
+  state.acts.forEach(a=>{
+    if(a.fase===pi) a.fase=ni;
+    else if(a.fase===ni) a.fase=pi;
+  });
+  if(collapsedPhases.has(pi)||collapsedPhases.has(ni)){
+    const hadPi=collapsedPhases.has(pi), hadNi=collapsedPhases.has(ni);
+    if(hadPi) collapsedPhases.add(ni); else collapsedPhases.delete(ni);
+    if(hadNi) collapsedPhases.add(pi); else collapsedPhases.delete(pi);
+    saveCollapsed();
+  }
+  save();render();
+}
+
 function buildTimeline(){
   const {t0,t1,days}=span();
   const W=days*zoom;
@@ -637,6 +666,10 @@ function buildTimeline(){
     const pr=document.createElement('div');
     pr.className='phaseRail';
     pr.innerHTML=`<button class="collapseBtn" aria-expanded="${!collapsed}" title="${collapsed?'Expandir grupo':'Recolher grupo'}">▾</button>
+        <span class="moveGrp">
+          <button class="moveBtn" data-dir="-1" title="Mover grupo para cima" ${pi===0?'disabled':''}>▲</button>
+          <button class="moveBtn" data-dir="1" title="Mover grupo para baixo" ${pi===PHASES.length-1?'disabled':''}>▼</button>
+        </span>
         <span class="chip" style="background:${ph.c}"></span>
         <h2 title="Clique para renomear">${esc(ph.n)}</h2>
         <span class="cnt">${done}/${list.length}</span>`;
@@ -644,6 +677,9 @@ function buildTimeline(){
       if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
       saveCollapsed();render();
     };
+    pr.querySelectorAll('.moveBtn').forEach(b=>{
+      b.onclick=()=>moveGroup(pi,Number(b.dataset.dir));
+    });
     const h2=pr.querySelector('h2');
     h2.onclick=()=>{
       const inp=document.createElement('input');
