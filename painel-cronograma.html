@@ -431,17 +431,46 @@ async function load(){
   return data?data.data:null;
 }
 let saveT=null;
-async function saveNow(dataToSave){
-  // Usa o retrato de "state" tirado no momento do clique/edição (dataToSave),
-  // não o "state" atual — porque a sincronização em tempo real (mais abaixo)
-  // troca a variável "state" inteira sempre que qualquer mudança chega do
-  // servidor. Se essa troca acontecesse durante os 350ms de espera do
-  // save(), a gravação usaria dados sem a edição que a pessoa acabou de
-  // fazer, mesmo sem dar erro nenhum — era exatamente essa a causa do
-  // "às vezes salva, às vezes não".
+// Usa o retrato de "state" tirado no momento do clique/edição (dataToSave),
+// não o "state" atual — porque a sincronização em tempo real (mais abaixo)
+// troca a variável "state" inteira sempre que qualquer mudança chega do
+// servidor. Se essa troca acontecesse durante os 350ms de espera do
+// save(), a gravação usaria dados sem a edição que a pessoa acabou de
+// fazer, mesmo sem dar erro nenhum — era exatamente essa a causa do
+// "às vezes salva, às vezes não".
+//
+// Isso sozinho não basta quando VÁRIAS pessoas editam ao mesmo tempo: se o
+// retrato local for antigo, salvar ele por cima do documento inteiro apaga
+// silenciosamente o que outra pessoa acabou de gravar. Por isso, antes de
+// gravar, buscamos a versão mais recente do servidor e mesclamos atividade
+// por atividade (usando o carimbo _ts de cada uma) em vez de sobrescrever
+// tudo de uma vez — era essa a causa dos relatos de "lancei a informação e
+// ela não ficou salva".
+function mergeActs(localActs,remoteActs,deletedIds){
+  const byId=new Map();
+  (remoteActs||[]).forEach(a=>byId.set(a.id,a));
+  (localActs||[]).forEach(a=>{
+    if(deletedIds&&deletedIds.has(a.id)) return;
+    const r=byId.get(a.id);
+    if(!r||(a._ts||0)>=(r._ts||0)) byId.set(a.id,a);
+  });
+  if(deletedIds) deletedIds.forEach(id=>byId.delete(id));
+  return [...byId.values()];
+}
+async function saveNow(dataToSave,opts){
   const payload=dataToSave||state;
+  const deletedIds=opts&&opts.deletedIds;
+  const {data:remoteRow}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
+  const remote=remoteRow&&remoteRow.data;
+  let toSave=payload;
+  if(remote&&remote.acts){
+    const acts=mergeActs(payload.acts,remote.acts,deletedIds);
+    const localPhasesTs=payload.phasesTs||0, remotePhasesTs=remote.phasesTs||0;
+    const phases=(remotePhasesTs>localPhasesTs&&remote.phases)?remote.phases:payload.phases;
+    toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs)};
+  }
   const {error}=await db.from('cronograma_state')
-    .upsert({id:1,data:payload,updated_at:new Date().toISOString()});
+    .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
   if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
   return true;
 }
@@ -588,9 +617,10 @@ function moveGroup(pi,dir){
   if(ni<0||ni>=PHASES.length) return;
   [PHASES[pi],PHASES[ni]]=[PHASES[ni],PHASES[pi]];
   state.acts.forEach(a=>{
-    if(a.fase===pi) a.fase=ni;
-    else if(a.fase===ni) a.fase=pi;
+    if(a.fase===pi){a.fase=ni;a._ts=Date.now();}
+    else if(a.fase===ni){a.fase=pi;a._ts=Date.now();}
   });
+  state.phasesTs=Date.now();
   if(collapsedPhases.has(pi)||collapsedPhases.has(ni)){
     const hadPi=collapsedPhases.has(pi), hadNi=collapsedPhases.has(ni);
     if(hadPi) collapsedPhases.add(ni); else collapsedPhases.delete(ni);
@@ -688,7 +718,7 @@ function buildTimeline(){
       inp.onkeydown=e=>{
         if(e.key==='Enter'){
           const v=inp.value.trim();
-          if(v) ph.n=v;
+          if(v){ ph.n=v; state.phasesTs=Date.now(); }
           save();render();
         }
         if(e.key==='Escape') render();
@@ -715,7 +745,7 @@ function buildTimeline(){
       if(st==='semdata'){
         const b=document.createElement('button');
         b.className='setdate';b.textContent='+ data';
-        b.onclick=()=>{a.ini=d2s(today());a.fim=d2s(addD(today(),7));save();render()};
+        b.onclick=()=>{a.ini=d2s(today());a.fim=d2s(addD(today(),7));a._ts=Date.now();save();render()};
         rail.appendChild(b);
       }
       railcol.appendChild(rail);
@@ -774,7 +804,7 @@ function buildTimeline(){
         rl.appendChild(inp);inp.focus();
         inp.onkeydown=e=>{
           if(e.key==='Enter'&&inp.value.trim()){
-            state.acts.push({id:uid(),fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:''});
+            state.acts.push({id:uid(),fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:'',_ts:Date.now()});
             save();render();
           }
           if(e.key==='Escape') render();
@@ -802,6 +832,7 @@ function buildTimeline(){
       inp.onkeydown=e=>{
         if(e.key==='Enter'&&inp.value.trim()){
           PHASES.push({n:inp.value.trim(),c:PALETTE[PHASES.length%PALETTE.length]});
+          state.phasesTs=Date.now();
           save();render();
         }
         if(e.key==='Escape') render();
@@ -858,6 +889,7 @@ function attachDrag(root,t0){
         if(nf<s2d(a.ini)) nf=s2d(a.ini);
         a.fim=d2s(nf);
       }
+      a._ts=Date.now();
       save();render();
     }
     drag=null;
@@ -908,6 +940,7 @@ function buildBoard(){
       if(!a)return;
       a.pct=Number(col.dataset.pct);
       if(a.pct>0&&!a.ini){a.ini=d2s(today());a.fim=d2s(addD(today(),7))}
+      a._ts=Date.now();
       save();render();
     };
     b.appendChild(col);
@@ -992,6 +1025,7 @@ function openDrawer(id){
     if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
     a.pct=pct;
     a.nota=d.querySelector('#fNota').value;
+    a._ts=Date.now();
     const ok=await saveNow(state);
     if(ok){ closeDrawer(); render(); }
     else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
@@ -1000,7 +1034,7 @@ function openDrawer(id){
   d.querySelector('#fDel').onclick=async()=>{
     if(!confirm('Excluir esta atividade? Não tem como desfazer.')) return;
     state.acts=state.acts.filter(x=>x.id!==id);
-    const ok=await saveNow(state);
+    const ok=await saveNow(state,{deletedIds:new Set([id])});
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
   // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo);
