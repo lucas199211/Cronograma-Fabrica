@@ -865,7 +865,7 @@ function attachDrag(root,t0){
     const a=state.acts.find(x=>x.id===bar.dataset.id);
     if(!a)return;
     const pt=e.touches?e.touches[0]:e;
-    drag={a,bar,mode:e.target.dataset.grip?'resize':'move',
+    drag={id:a.id,bar,mode:e.target.dataset.grip?'resize':'move',
           x0:pt.clientX,l0:parseFloat(bar.style.left),w0:parseFloat(bar.style.width),
           ini:a.ini,fim:a.fim,delta:0};
     e.preventDefault();
@@ -879,10 +879,16 @@ function attachDrag(root,t0){
     else drag.bar.style.width=Math.max(zoom,drag.w0+dd*zoom)+'px';
     e.preventDefault();
   };
+  // Relê a atividade em "state.acts" pelo id (em vez de usar um objeto
+  // capturado no mousedown): se uma sincronização em tempo real trocar
+  // "state" inteiro durante o arraste, o objeto antigo vira uma referência
+  // órfã e a edição se perderia silenciosamente — mesma causa do bug na
+  // gaveta de edição.
   const up=()=>{
     if(!drag)return;
-    const {a,mode,delta,ini,fim}=drag;
-    if(delta!==0){
+    const {id,mode,delta,ini,fim}=drag;
+    const a=state.acts.find(x=>x.id===id);
+    if(a&&delta!==0){
       if(mode==='move'){a.ini=d2s(addD(s2d(ini),delta));a.fim=d2s(addD(s2d(fim),delta))}
       else{
         let nf=addD(s2d(fim),delta);
@@ -1014,18 +1020,28 @@ function openDrawer(id){
   // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
   // Se falhar, a caixa continua aberta com o que foi digitado — nada se perde
   // e um alerta explica o motivo, em vez de fechar silenciosamente sem salvar.
+  //
+  // Relê a atividade em "state.acts" pelo id em vez de usar "a" (capturado
+  // quando a gaveta abriu): a sincronização em tempo real troca "state"
+  // inteiro a cada atualização (inclusive o salvamento periódico automático
+  // a cada 60s, sem ninguém mexer em nada) — se isso acontecer com a gaveta
+  // aberta, "a" vira uma referência órfã, fora do novo "state.acts". Salvar
+  // em cima dela não tinha efeito nenhum: a gaveta fechava como se tivesse
+  // dado certo, mas nada do que foi digitado ia para o servidor.
   async function doSave(){
+    const cur=state.acts.find(x=>x.id===id);
+    if(!cur){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
     saveBtn.disabled=true; saveBtn.textContent='Salvando...';
-    a.nome=d.querySelector('#fNome').value.trim()||a.nome;
-    a.fase=Number(d.querySelector('#fFase').value);
+    cur.nome=d.querySelector('#fNome').value.trim()||cur.nome;
+    cur.fase=Number(d.querySelector('#fFase').value);
     const respRaw=d.querySelector('#fResp').value.trim();
-    a.resp=respRaw?respRaw.charAt(0).toUpperCase()+respRaw.slice(1):respRaw;
-    a.ini=parseDateField(d.querySelector('#fIni').value,a.ini);
-    a.fim=parseDateField(d.querySelector('#fFim').value,a.fim);
-    if(a.ini&&a.fim&&s2d(a.fim)<s2d(a.ini)) a.fim=a.ini;
-    a.pct=pct;
-    a.nota=d.querySelector('#fNota').value;
-    a._ts=Date.now();
+    cur.resp=respRaw?respRaw.charAt(0).toUpperCase()+respRaw.slice(1):respRaw;
+    cur.ini=parseDateField(d.querySelector('#fIni').value,cur.ini);
+    cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
+    if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
+    cur.pct=pct;
+    cur.nota=d.querySelector('#fNota').value;
+    cur._ts=Date.now();
     const ok=await saveNow(state);
     if(ok){ closeDrawer(); render(); }
     else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
