@@ -413,6 +413,12 @@ function parseDateField(txt,fallback){
   if(iso===null) alert('Data "'+t+'" não reconhecida (use dd/mm/aaaa). Mantendo a data anterior.');
   return iso!==null?iso:(fallback||'');
 }
+// garante o prefixo "R$ " em quem já tem conteúdo (mesmo digitado antes
+// dessa máscara existir); campo vazio continua vazio
+function fmtMoney(v){
+  if(!v) return '';
+  return /^R\$/.test(v)?v:'R$ '+v;
+}
 
 /* ============================ status ============================ */
 function statusOf(a){
@@ -982,7 +988,7 @@ function openDrawer(id){
       <div class="cotGrid" id="fCot">${[0,1,2].map(i=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
         return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(c.forn||'')}">
-                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(c.valor||'')}">`;
+                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(c.valor||''))}">`;
       }).join('')}</div>
     </div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
@@ -1010,6 +1016,20 @@ function openDrawer(id){
   });
   maskDate(d.querySelector('#fIni'));
   maskDate(d.querySelector('#fFim'));
+  // máscara: mantém o prefixo "R$ " sempre visível enquanto o campo tem
+  // conteúdo; apagar tudo (inclusive o prefixo) deixa o campo vazio de
+  // verdade, pra dar pra limpar o valor
+  const maskMoney=el=>el.addEventListener('input',()=>{
+    const m=el.value.match(/^R\$\s*/);
+    const L=m?m[0].length:0;
+    const raw=el.value.slice(L);
+    if(!raw){ el.value=''; return; }
+    const rawPos=Math.max(0,el.selectionStart-L);
+    el.value='R$ '+raw;
+    const newPos=3+rawPos;
+    el.setSelectionRange(newPos,newPos);
+  });
+  d.querySelectorAll('.cotValor').forEach(maskMoney);
 
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
@@ -1071,10 +1091,12 @@ function openDrawer(id){
     const ok=await saveNow(state,{deletedIds:new Set([id])});
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
-  // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo);
-  // do Prazo, Enter vai pro botão Salvar — só ali (ou clicando) é que salva de
-  // verdade e fecha a caixa. Assim dá pra preencher tudo só pelo teclado sem
-  // fechar a caixa sem querer no meio do preenchimento.
+  // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo
+  // → Fornecedor/Valor das 3 linhas de orçamento); do último Valor, Enter
+  // vai pro botão Salvar — só ali (ou clicando) é que salva de verdade e
+  // fecha a caixa. Assim dá pra preencher tudo só pelo teclado sem fechar a
+  // caixa sem querer no meio do preenchimento. Fica de fora dessa cadeia só
+  // a Observação (textarea), onde Enter precisa continuar quebrando linha.
   const goNext=(fromSel,toSel)=>{
     d.querySelector(fromSel).addEventListener('keydown',e=>{
       if(e.key!=='Enter')return;
@@ -1085,7 +1107,13 @@ function openDrawer(id){
   goNext('#fNome','#fResp');
   goNext('#fResp','#fIni');
   goNext('#fIni','#fFim');
-  d.querySelector('#fFim').addEventListener('keydown',e=>{
+  goNext('#fFim','.cotForn[data-i="0"]');
+  goNext('.cotForn[data-i="0"]','.cotValor[data-i="0"]');
+  goNext('.cotValor[data-i="0"]','.cotForn[data-i="1"]');
+  goNext('.cotForn[data-i="1"]','.cotValor[data-i="1"]');
+  goNext('.cotValor[data-i="1"]','.cotForn[data-i="2"]');
+  goNext('.cotForn[data-i="2"]','.cotValor[data-i="2"]');
+  d.querySelector('.cotValor[data-i="2"]').addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     e.preventDefault();
     saveBtn.focus();
