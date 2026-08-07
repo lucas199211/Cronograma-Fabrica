@@ -1000,6 +1000,7 @@ function openDrawer(id){
                 <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(c.valor||''))}">`;
       }).join('')}</div>
     </div>
+    <div class="f"><label for="fLink">Link</label><input id="fLink" type="url" value="${esc(a.link||'')}" placeholder="link do sharepoint"></div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
       <button class="solid" id="fSave" type="button">Salvar</button>
@@ -1053,13 +1054,14 @@ function openDrawer(id){
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
   // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
-  // andamento, orçamentos, observação) — mantém nome e fase, que identificam
-  // a atividade
+  // andamento, orçamentos, link, observação) — mantém nome e fase, que
+  // identificam a atividade
   d.querySelector('#fClear').onclick=()=>{
     d.querySelector('#fResp').value='';
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
+    d.querySelector('#fLink').value='';
     d.querySelector('#fNota').value='';
     pct=0;
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===0));
@@ -1093,6 +1095,7 @@ function openDrawer(id){
       forn:d.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
       valor:d.querySelector(`.cotValor[data-i="${i}"]`).value.trim()
     }));
+    cur.link=d.querySelector('#fLink').value.trim();
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
     const ok=await saveNow(state);
@@ -1107,11 +1110,11 @@ function openDrawer(id){
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
   };
   // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo
-  // → Fornecedor/Valor das 3 linhas de orçamento); do último Valor, Enter
-  // vai pro botão Salvar — só ali (ou clicando) é que salva de verdade e
-  // fecha a caixa. Assim dá pra preencher tudo só pelo teclado sem fechar a
-  // caixa sem querer no meio do preenchimento. Fica de fora dessa cadeia só
-  // a Observação (textarea), onde Enter precisa continuar quebrando linha.
+  // → Fornecedor/Valor das 3 linhas de orçamento → Link); do Link, Enter vai
+  // pro botão Salvar — só ali (ou clicando) é que salva de verdade e fecha a
+  // caixa. Assim dá pra preencher tudo só pelo teclado sem fechar a caixa
+  // sem querer no meio do preenchimento. Fica de fora dessa cadeia só a
+  // Observação (textarea), onde Enter precisa continuar quebrando linha.
   const goNext=(fromSel,toSel)=>{
     d.querySelector(fromSel).addEventListener('keydown',e=>{
       if(e.key!=='Enter')return;
@@ -1128,7 +1131,8 @@ function openDrawer(id){
   goNext('.cotForn[data-i="1"]','.cotValor[data-i="1"]');
   goNext('.cotValor[data-i="1"]','.cotForn[data-i="2"]');
   goNext('.cotForn[data-i="2"]','.cotValor[data-i="2"]');
-  d.querySelector('.cotValor[data-i="2"]').addEventListener('keydown',e=>{
+  goNext('.cotValor[data-i="2"]','#fLink');
+  d.querySelector('#fLink').addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     e.preventDefault();
     saveBtn.focus();
