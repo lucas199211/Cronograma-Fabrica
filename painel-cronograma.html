@@ -261,6 +261,10 @@ h1{
   font-family:var(--mono);font-size:11px;color:var(--ink-2);
 }
 .pcts button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.cotHead{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px}
+.cotHead span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.cotGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cotGrid input{font-size:12.5px}
 .drawer .acts{display:flex;gap:8px;margin-top:20px}
 .solid{border:1px solid var(--ink);background:var(--ink);color:var(--panel);padding:8px 14px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;flex:1}
 .danger{border:1px solid var(--line);background:transparent;color:#8C2E2A;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase}
@@ -973,6 +977,14 @@ function openDrawer(id){
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
+    <div class="f"><label>Orçamentos</label>
+      <div class="cotHead"><span>Fornecedor</span><span>Valor</span></div>
+      <div class="cotGrid" id="fCot">${[0,1,2].map(i=>{
+        const c=(a.cotacoes&&a.cotacoes[i])||{};
+        return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(c.forn||'')}">
+                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(c.valor||'')}">`;
+      }).join('')}</div>
+    </div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
       <button class="solid" id="fSave" type="button">Salvar</button>
@@ -1006,11 +1018,13 @@ function openDrawer(id){
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
   // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
-  // andamento, observação) — mantém nome e fase, que identificam a atividade
+  // andamento, orçamentos, observação) — mantém nome e fase, que identificam
+  // a atividade
   d.querySelector('#fClear').onclick=()=>{
     d.querySelector('#fResp').value='';
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
+    [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
     d.querySelector('#fNota').value='';
     pct=0;
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===0));
@@ -1040,6 +1054,10 @@ function openDrawer(id){
     cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
+    cur.cotacoes=[0,1,2].map(i=>({
+      forn:d.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
+      valor:d.querySelector(`.cotValor[data-i="${i}"]`).value.trim()
+    }));
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
     const ok=await saveNow(state);
