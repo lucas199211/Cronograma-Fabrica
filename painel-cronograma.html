@@ -413,11 +413,20 @@ function parseDateField(txt,fallback){
   if(iso===null) alert('Data "'+t+'" não reconhecida (use dd/mm/aaaa). Mantendo a data anterior.');
   return iso!==null?iso:(fallback||'');
 }
-// garante o prefixo "R$ " em quem já tem conteúdo (mesmo digitado antes
-// dessa máscara existir); campo vazio continua vazio
+// formata como "R$ 1.234,56": ponto a cada 3 dígitos na parte inteira,
+// vírgula pra centavos (só aparece se a pessoa digitar uma vírgula).
+// Também reformata valores já salvos antes dessa máscara existir (ex:
+// "R$ 350000" vira "R$ 350.000" ao reabrir a gaveta). Campo vazio continua
+// vazio, pra dar pra limpar o valor.
 function fmtMoney(v){
-  if(!v) return '';
-  return /^R\$/.test(v)?v:'R$ '+v;
+  const raw=String(v||'').replace(/^R\$\s*/,'').replace(/[^\d,]/g,'');
+  if(!raw) return '';
+  const commaIdx=raw.indexOf(',');
+  let intPart=commaIdx===-1?raw:raw.slice(0,commaIdx);
+  const decPart=commaIdx===-1?null:raw.slice(commaIdx+1).replace(/,/g,'').slice(0,2);
+  intPart=intPart.replace(/^0+(?=\d)/,'')||'0';
+  const grouped=intPart.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  return 'R$ '+grouped+(decPart!==null?','+decPart:'');
 }
 
 /* ============================ status ============================ */
@@ -1016,17 +1025,23 @@ function openDrawer(id){
   });
   maskDate(d.querySelector('#fIni'));
   maskDate(d.querySelector('#fFim'));
-  // máscara: mantém o prefixo "R$ " sempre visível enquanto o campo tem
-  // conteúdo; apagar tudo (inclusive o prefixo) deixa o campo vazio de
-  // verdade, pra dar pra limpar o valor
+  // máscara: aplica fmtMoney a cada tecla (ponto de milhar automático,
+  // vírgula pra centavos se a pessoa digitar uma). O cursor é reposicionado
+  // contando quantos dígitos/vírgula existiam antes dele (ignorando "R$ " e
+  // os pontos de milhar, que são inseridos automaticamente) e andando esse
+  // tanto na string já formatada — mesma ideia do maskDate acima. Apagar
+  // tudo deixa o campo vazio de verdade, pra dar pra limpar o valor.
   const maskMoney=el=>el.addEventListener('input',()=>{
-    const m=el.value.match(/^R\$\s*/);
-    const L=m?m[0].length:0;
-    const raw=el.value.slice(L);
-    if(!raw){ el.value=''; return; }
-    const rawPos=Math.max(0,el.selectionStart-L);
-    el.value='R$ '+raw;
-    const newPos=3+rawPos;
+    const contentBefore=el.value.slice(0,el.selectionStart).replace(/[^\d,]/g,'').length;
+    const formatted=fmtMoney(el.value);
+    el.value=formatted;
+    if(!formatted) return;
+    let count=0,newPos=3;
+    for(const ch of formatted.slice(3)){
+      if(count>=contentBefore) break;
+      newPos++;
+      if(ch!=='.') count++;
+    }
     el.setSelectionRange(newPos,newPos);
   });
   d.querySelectorAll('.cotValor').forEach(maskMoney);
