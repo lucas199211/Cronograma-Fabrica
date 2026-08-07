@@ -269,10 +269,29 @@ h1{
   font-family:var(--mono);font-size:11px;color:var(--ink-2);
 }
 .pcts button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
-.cotHead{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px}
+.cotHead{display:grid;grid-template-columns:1fr 1fr 34px;gap:6px;margin-bottom:4px}
 .cotHead span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
-.cotGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cotGrid{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
 .cotGrid input{font-size:12.5px}
+.cotAttach{display:flex;align-items:center;gap:3px}
+.cotPick{
+  border:1px solid var(--line);background:var(--concrete);color:var(--ink-2);
+  width:34px;height:34px;flex:0 0 34px;display:flex;align-items:center;justify-content:center;padding:0;
+}
+.cotPick:hover{border-color:var(--ink);color:var(--ink)}
+.cotOpen{
+  border:1px solid var(--line);background:var(--concrete);color:var(--ink);
+  height:34px;padding:0 6px;display:flex;align-items:center;gap:4px;max-width:100px;overflow:hidden;
+}
+.cotOpen:hover{border-color:var(--ink)}
+.cotOpen svg{flex:0 0 auto}
+.cotOpen .fn{font-family:var(--mono);font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cotRm{
+  border:1px solid var(--line);background:var(--concrete);color:var(--ink-3);
+  width:22px;height:34px;flex:0 0 22px;padding:0;font-size:13px;line-height:1;
+}
+.cotRm:hover{color:#8C2E2A;border-color:#8C2E2A}
+.cotUploading{font-family:var(--mono);font-size:9.5px;color:var(--ink-3)}
 .drawer .acts{display:flex;gap:8px;margin-top:20px}
 .solid{border:1px solid var(--ink);background:var(--ink);color:var(--panel);padding:8px 14px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;flex:1}
 .danger{border:1px solid var(--line);background:transparent;color:#8C2E2A;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase}
@@ -372,6 +391,8 @@ const COLLAPSEKEY='cronograma-planta-collapsed';
 const SUPABASE_URL='https://jupjmqoykgwdrhyfcoem.supabase.co';
 const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1cGptcW95a2d3ZHJoeWZjb2VtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwMzAxNzksImV4cCI6MjEwMDYwNjE3OX0.6AhhkPl9jAnL71Rta7YxroVFOjYH9KTwyaiGrQI1-lo';
 const SHARED_EMAIL='equipe@cronograma.local';
+const ATTACH_BUCKET='anexos';
+const PAPERCLIP_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 015 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>';
 const db=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
 
 let state={acts:[]};
@@ -1074,6 +1095,22 @@ function openDrawer(id){
   const a=state.acts.find(x=>x.id===id);
   if(!a)return;
   editing=id;
+  // estado dos 3 anexos, separado dos inputs de texto: upload/remoção
+  // salvam na hora (não esperam o botão Salvar), então precisam de um lugar
+  // pra viver que sobreviva a re-render da célula sem depender do DOM
+  let cotAnexos=[0,1,2].map(i=>(a.cotacoes&&a.cotacoes[i]&&a.cotacoes[i].anexo)||null);
+  function attachCellHTML(i){
+    const anexo=cotAnexos[i];
+    if(!anexo) return `<span class="cotAttach" data-i="${i}">
+        <button type="button" class="cotPick" data-i="${i}" title="Anexar arquivo">${PAPERCLIP_SVG}</button>
+        <input type="file" class="cotFile" data-i="${i}" style="display:none">
+      </span>`;
+    return `<span class="cotAttach" data-i="${i}">
+        <button type="button" class="cotOpen" data-i="${i}" title="${esc(anexo.nome)}">${PAPERCLIP_SVG}<span class="fn">${esc(anexo.nome)}</span></button>
+        <button type="button" class="cotRm" data-i="${i}" title="Remover anexo">×</button>
+        <input type="file" class="cotFile" data-i="${i}" style="display:none">
+      </span>`;
+  }
   const scrim=document.createElement('div');scrim.className='scrim';scrim.onclick=closeDrawer;
   const d=document.createElement('div');d.className='drawer';
   d.innerHTML=`
@@ -1088,11 +1125,12 @@ function openDrawer(id){
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
     <div class="f"><label>Orçamentos</label>
-      <div class="cotHead"><span>Fornecedor</span><span>Valor</span></div>
+      <div class="cotHead"><span>Fornecedor</span><span>Valor</span><span></span></div>
       <div class="cotGrid" id="fCot">${[0,1,2].map(i=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
         return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(c.forn||'')}">
-                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(c.valor||''))}">`;
+                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(c.valor||''))}">
+                ${attachCellHTML(i)}`;
       }).join('')}</div>
     </div>
     <div class="f"><label for="fLink">Link</label><input id="fLink" type="url" value="${esc(a.link||'')}" placeholder="link do sharepoint"></div>
@@ -1142,6 +1180,60 @@ function openDrawer(id){
   });
   d.querySelectorAll('.cotValor').forEach(maskMoney);
 
+  // anexos: clipe -> abre o seletor de arquivo escondido; ao escolher,
+  // envia pro Storage e já salva a referência na hora (não espera o botão
+  // Salvar) — assim o anexo não se perde se a pessoa fechar a gaveta sem
+  // clicar em Salvar. Como isso salva tudo junto (via syncCurFromFields,
+  // mais abaixo), o que já estava digitado nos outros campos vai junto.
+  const fCot=d.querySelector('#fCot');
+  function renderAttachCell(i){
+    const cell=fCot.querySelector(`.cotAttach[data-i="${i}"]`);
+    if(cell) cell.outerHTML=attachCellHTML(i);
+  }
+  fCot.addEventListener('click',async e=>{
+    const pick=e.target.closest('.cotPick');
+    if(pick){ fCot.querySelector(`.cotFile[data-i="${pick.dataset.i}"]`).click(); return; }
+    const openBtn=e.target.closest('.cotOpen');
+    if(openBtn){
+      const i=Number(openBtn.dataset.i);
+      const anexo=cotAnexos[i];
+      if(!anexo) return;
+      openBtn.disabled=true;
+      const {data,error}=await db.storage.from(ATTACH_BUCKET).createSignedUrl(anexo.path,60);
+      openBtn.disabled=false;
+      if(error){ toast('Não deu para abrir o anexo: '+error.message); return; }
+      window.open(data.signedUrl,'_blank');
+      return;
+    }
+    const rm=e.target.closest('.cotRm');
+    if(rm){
+      const i=Number(rm.dataset.i);
+      const anexo=cotAnexos[i];
+      if(!anexo) return;
+      if(!confirm('Remover o anexo "'+anexo.nome+'"?')) return;
+      rm.disabled=true;
+      await db.storage.from(ATTACH_BUCKET).remove([anexo.path]);
+      cotAnexos[i]=null;
+      renderAttachCell(i);
+      await commitAnexoChange();
+      return;
+    }
+  });
+  fCot.addEventListener('change',async e=>{
+    const file=e.target.closest('.cotFile');
+    if(!file||!file.files[0]) return;
+    const i=Number(file.dataset.i);
+    const picked=file.files[0];
+    const cell=fCot.querySelector(`.cotAttach[data-i="${i}"]`);
+    cell.innerHTML='<span class="cotUploading">enviando…</span>';
+    const path=`${id}/cot${i}/${Date.now()}-${picked.name}`;
+    const {error:upErr}=await db.storage.from(ATTACH_BUCKET).upload(path,picked);
+    if(upErr){ toast('Não deu para enviar o anexo: '+upErr.message); renderAttachCell(i); return; }
+    cotAnexos[i]={path,nome:picked.name};
+    renderAttachCell(i);
+    await commitAnexoChange();
+  });
+
   let pct=a.pct||0;
   d.querySelector('#fPct').onclick=e=>{
     const b=e.target.closest('button');if(!b)return;
@@ -1163,10 +1255,6 @@ function openDrawer(id){
     d.querySelector('#fResp').focus();
   };
   const saveBtn=d.querySelector('#fSave');
-  // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
-  // Se falhar, a caixa continua aberta com o que foi digitado — nada se perde
-  // e um alerta explica o motivo, em vez de fechar silenciosamente sem salvar.
-  //
   // Relê a atividade em "state.acts" pelo id em vez de usar "a" (capturado
   // quando a gaveta abriu): a sincronização em tempo real troca "state"
   // inteiro a cada atualização (inclusive o salvamento periódico automático
@@ -1174,10 +1262,11 @@ function openDrawer(id){
   // aberta, "a" vira uma referência órfã, fora do novo "state.acts". Salvar
   // em cima dela não tinha efeito nenhum: a gaveta fechava como se tivesse
   // dado certo, mas nada do que foi digitado ia para o servidor.
-  async function doSave(){
-    const cur=state.acts.find(x=>x.id===id);
-    if(!cur){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
-    saveBtn.disabled=true; saveBtn.textContent='Salvando...';
+  //
+  // Compartilhada entre o botão Salvar e as ações de anexo (que salvam na
+  // hora, sem esperar o Salvar) — assim os dois caminhos gravam os campos
+  // exatamente do mesmo jeito, sem duplicar a leitura de cada input.
+  function syncCurFromFields(cur){
     cur.nome=d.querySelector('#fNome').value.trim()||cur.nome;
     cur.fase=Number(d.querySelector('#fFase').value);
     const respRaw=d.querySelector('#fResp').value.trim();
@@ -1188,11 +1277,31 @@ function openDrawer(id){
     cur.pct=pct;
     cur.cotacoes=[0,1,2].map(i=>({
       forn:d.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
-      valor:d.querySelector(`.cotValor[data-i="${i}"]`).value.trim()
+      valor:d.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
+      anexo:cotAnexos[i]||null
     }));
     cur.link=d.querySelector('#fLink').value.trim();
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
+  }
+  // Usada pelo clipe (upload/remoção de anexo): salva na hora, sem fechar a
+  // gaveta, pra dar pra continuar anexando nas outras linhas.
+  async function commitAnexoChange(){
+    const cur=state.acts.find(x=>x.id===id);
+    if(!cur){ toast('Esta atividade não existe mais.'); return false; }
+    syncCurFromFields(cur);
+    const ok=await saveNow(state);
+    if(!ok) toast('Não deu para salvar o anexo: tente de novo.');
+    return ok;
+  }
+  // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
+  // Se falhar, a caixa continua aberta com o que foi digitado — nada se perde
+  // e um alerta explica o motivo, em vez de fechar silenciosamente sem salvar.
+  async function doSave(){
+    const cur=state.acts.find(x=>x.id===id);
+    if(!cur){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
+    saveBtn.disabled=true; saveBtn.textContent='Salvando...';
+    syncCurFromFields(cur);
     const ok=await saveNow(state);
     if(ok){ closeDrawer(); render(); }
     else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
