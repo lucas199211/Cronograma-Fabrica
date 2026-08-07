@@ -273,13 +273,18 @@ h1{
   font-family:var(--mono);font-size:11px;color:var(--ink-2);
 }
 .pcts button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
-.cotHead{display:grid;grid-template-columns:16px .8fr 1.3fr 34px;gap:6px;margin-bottom:4px}
+.cotModeSeg{display:flex;gap:1px;margin-bottom:8px}
+.cotModeSeg button{
+  flex:1;border:1px solid var(--line);background:var(--concrete);padding:6px 0;
+  font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--ink-2);
+}
+.cotModeSeg button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.cotHead{display:grid;grid-template-columns:.8fr 1.3fr 34px;gap:6px;margin-bottom:4px}
+.cotHead.docMode{grid-template-columns:1fr 34px}
 .cotHead span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
-.cotGrid{display:grid;grid-template-columns:16px .8fr 1.3fr auto;gap:6px;align-items:center}
+.cotGrid{display:grid;grid-template-columns:.8fr 1.3fr auto;gap:6px;align-items:center}
+.cotGrid.docMode{grid-template-columns:1fr auto}
 .cotGrid input{font-size:12.5px}
-.cotDocChk{width:15px;height:15px;margin:0;cursor:pointer}
-.cotForn.cotDoc{grid-column:2/4}
-.cotValor.cotHidden{display:none}
 .cotAttach{display:flex;align-items:center;gap:3px}
 .cotPick{
   border:1px solid var(--line);background:var(--concrete);color:var(--ink-2);
@@ -1172,14 +1177,21 @@ function openDrawer(id){
         <input type="file" class="cotFile" data-i="${i}" style="display:none">
       </span>`;
   }
-  // "doc" marca a linha como um anexo qualquer (não é orçamento de
-  // fornecedor): o campo Fornecedor vira o nome do documento e ocupa
-  // também o espaço do Valor, que some (não faz sentido pedir preço de um
-  // documento que não é cotação).
-  function cotRowHTML(i,forn,valor,doc){
-    return `<input type="checkbox" class="cotDocChk" data-i="${i}" ${doc?'checked':''} title="Marcar como documento (não é orçamento de fornecedor)">
-            <input type="text" class="cotForn${doc?' cotDoc':''}" data-i="${i}" placeholder="${doc?'documento':'fornecedor'}" value="${esc(forn||'')}">
-            <input type="text" class="cotValor${doc?' cotHidden':''}" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
+  // Alterna o bloco inteiro entre "orçamentos" (fornecedor + valor) e
+  // "documentos" (um campo único mais largo, sem valor — não faz sentido
+  // pedir preço de um anexo qualquer que não é cotação de fornecedor).
+  // Troca tudo de uma vez, não linha por linha.
+  let cotModo=a.cotModo==='documento'?'documento':'orcamento';
+  function cotHeadHTML(){
+    return cotModo==='documento'
+      ?`<span>Documento</span><span></span>`
+      :`<span>Fornecedor</span><span>Valor</span><span></span>`;
+  }
+  function cotRowHTML(i,forn,valor){
+    if(cotModo==='documento') return `<input type="text" class="cotForn" data-i="${i}" placeholder="documento" value="${esc(forn||'')}">
+            ${attachCellHTML(i)}`;
+    return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(forn||'')}">
+            <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
             ${attachCellHTML(i)}`;
   }
   const scrim=document.createElement('div');scrim.className='scrim';scrim.onclick=closeDrawer;
@@ -1196,10 +1208,14 @@ function openDrawer(id){
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
     <div class="f"><label>Orçamentos</label>
-      <div class="cotHead"><span></span><span>Fornecedor</span><span>Valor</span><span></span></div>
-      <div class="cotGrid" id="fCot">${Array.from({length:cotCount},(_,i)=>{
+      <div class="cotModeSeg" id="fCotMode">
+        <button type="button" data-m="orcamento" aria-pressed="${cotModo==='orcamento'}">Orçamentos</button>
+        <button type="button" data-m="documento" aria-pressed="${cotModo==='documento'}">Documentos</button>
+      </div>
+      <div class="cotHead${cotModo==='documento'?' docMode':''}" id="fCotHead">${cotHeadHTML()}</div>
+      <div class="cotGrid${cotModo==='documento'?' docMode':''}" id="fCot">${Array.from({length:cotCount},(_,i)=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
-        return cotRowHTML(i,c.forn,c.valor,c.doc);
+        return cotRowHTML(i,c.forn,c.valor);
       }).join('')}</div>
       <button type="button" class="addbtn" id="fCotAdd">+ linha</button>
     </div>
@@ -1255,22 +1271,21 @@ function openDrawer(id){
     }
     el.setSelectionRange(newPos,newPos);
   });
-  // Enter desce Fornecedor -> Valor -> próxima linha, na ordem em que os
-  // campos aparecem no DOM; da última linha, vai pro Link. Pula o Valor
-  // escondido (linhas marcadas como documento), senão o Enter tentaria
-  // focar um campo invisível e travaria ali.
+  // Enter desce Fornecedor -> Valor -> próxima linha (ou só Documento ->
+  // próxima linha, em modo documento), na ordem em que os campos aparecem
+  // no DOM; da última linha, vai pro Link.
   fCot.addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     const cur=e.target.closest('.cotForn,.cotValor');
     if(!cur)return;
     e.preventDefault();
-    const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')].filter(el=>!el.classList.contains('cotHidden'));
+    const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')];
     const idx=focusables.indexOf(cur);
     if(idx>=0&&idx<focusables.length-1) focusables[idx+1].focus();
     else d.querySelector('#fLink').focus();
   });
-  // "+ linha": adiciona mais um par fornecedor/valor pra comparar orçamento
-  // de mais um fornecedor, além dos 3 iniciais.
+  // "+ linha": adiciona mais uma linha (fornecedor/valor, ou documento,
+  // conforme o modo atual) além das 3 iniciais.
   d.querySelector('#fCotAdd').onclick=()=>{
     const i=cotCount;
     cotCount++;
@@ -1278,6 +1293,27 @@ function openDrawer(id){
     fCot.insertAdjacentHTML('beforeend',cotRowHTML(i));
     fCot.querySelector(`.cotForn[data-i="${i}"]`).focus();
   };
+  // Alterna o modo do bloco inteiro: reconstrói cabeçalho e linhas de uma
+  // vez, preservando o texto já digitado em "Fornecedor"/"Documento" (é o
+  // mesmo campo, só muda o que ele representa); o Valor não sobrevive à
+  // troca de modo, já que não existe em modo documento.
+  d.querySelector('#fCotMode').addEventListener('click',e=>{
+    const b=e.target.closest('button');
+    if(!b)return;
+    const novoModo=b.dataset.m;
+    if(novoModo===cotModo)return;
+    const forns=Array.from({length:cotCount},(_,i)=>{
+      const el=fCot.querySelector(`.cotForn[data-i="${i}"]`);
+      return el?el.value:'';
+    });
+    cotModo=novoModo;
+    [...d.querySelectorAll('#fCotMode button')].forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.m===cotModo)));
+    const cotHead=d.querySelector('#fCotHead');
+    cotHead.className='cotHead'+(cotModo==='documento'?' docMode':'');
+    cotHead.innerHTML=cotHeadHTML();
+    fCot.className='cotGrid'+(cotModo==='documento'?' docMode':'');
+    fCot.innerHTML=Array.from({length:cotCount},(_,i)=>cotRowHTML(i,forns[i])).join('');
+  });
 
   // anexos: clipe -> abre o seletor de arquivo escondido; ao escolher,
   // envia pro Storage e já salva a referência na hora (não espera o botão
@@ -1318,18 +1354,6 @@ function openDrawer(id){
     }
   });
   fCot.addEventListener('change',async e=>{
-    const chk=e.target.closest('.cotDocChk');
-    if(chk){
-      const i=chk.dataset.i;
-      const doc=chk.checked;
-      const forn=fCot.querySelector(`.cotForn[data-i="${i}"]`);
-      const valor=fCot.querySelector(`.cotValor[data-i="${i}"]`);
-      forn.placeholder=doc?'documento':'fornecedor';
-      forn.classList.toggle('cotDoc',doc);
-      valor.classList.toggle('cotHidden',doc);
-      if(doc) valor.value='';
-      return;
-    }
     const file=e.target.closest('.cotFile');
     if(!file||!file.files[0]) return;
     const i=Number(file.dataset.i);
@@ -1385,15 +1409,12 @@ function openDrawer(id){
     cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
-    cur.cotacoes=Array.from({length:cotCount},(_,i)=>{
-      const doc=fCot.querySelector(`.cotDocChk[data-i="${i}"]`).checked;
-      return {
-        forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
-        valor:doc?'':fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
-        doc,
-        anexo:cotAnexos[i]||null
-      };
-    });
+    cur.cotModo=cotModo;
+    cur.cotacoes=Array.from({length:cotCount},(_,i)=>({
+      forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
+      valor:cotModo==='documento'?'':fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
+      anexo:cotAnexos[i]||null
+    }));
     cur.link=d.querySelector('#fLink').value.trim();
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
