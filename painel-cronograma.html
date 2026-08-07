@@ -237,6 +237,14 @@ h1{
   linear-gradient(var(--panel),var(--panel)) padding-box}
 .card.late .m .d{color:#8C2E2A;font-weight:600}
 
+/* ---------- excluídos ---------- */
+.delRow{
+  background:var(--panel);border-bottom:1px solid var(--line-2);
+  padding:11px 18px;display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline;
+}
+.delRow .t{font-size:13px;flex:1;min-width:180px}
+.delRow .m{font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+
 /* ---------- gaveta ---------- */
 .scrim{position:fixed;inset:0;background:rgba(21,24,27,.32);z-index:80}
 .drawer{
@@ -297,6 +305,7 @@ h1{
     <div class="seg" role="group" aria-label="Visão">
       <button id="vTime" aria-pressed="true">Linha do tempo</button>
       <button id="vBoard" aria-pressed="false">Quadro</button>
+      <button id="vDel" aria-pressed="false">Excluídos</button>
     </div>
     <div class="seg" role="group" aria-label="Escala" id="zoomGrp">
       <button data-z="12" aria-pressed="true">Semanas</button>
@@ -476,6 +485,15 @@ function mergeActs(localActs,remoteActs,deletedIds){
   if(deletedIds) deletedIds.forEach(id=>byId.delete(id));
   return [...byId.values()];
 }
+// registro de exclusão é imutável (cada atividade só é excluída uma vez) —
+// então basta uma união por id, sem precisar de carimbo pra decidir quem
+// venceu
+function mergeDeletados(local,remote){
+  const byId=new Map();
+  (remote||[]).forEach(x=>byId.set(x.id,x));
+  (local||[]).forEach(x=>byId.set(x.id,x));
+  return [...byId.values()];
+}
 async function saveNow(dataToSave,opts){
   const payload=dataToSave||state;
   const deletedIds=opts&&opts.deletedIds;
@@ -486,7 +504,8 @@ async function saveNow(dataToSave,opts){
     const acts=mergeActs(payload.acts,remote.acts,deletedIds);
     const localPhasesTs=payload.phasesTs||0, remotePhasesTs=remote.phasesTs||0;
     const phases=(remotePhasesTs>localPhasesTs&&remote.phases)?remote.phases:payload.phases;
-    toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs)};
+    const deletados=mergeDeletados(payload.deletados,remote.deletados);
+    toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs),deletados};
   }
   const {error}=await db.from('cronograma_state')
     .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
@@ -554,6 +573,55 @@ function showGate(){
     pwd.onkeydown=e=>{ if(e.key==='Enter') tryLogin(); };
   });
 }
+// Confere a senha da equipe sem derrubar a sessão atual da aba: abre um
+// cliente Supabase à parte, sem persistir sessão, só pra esse teste — e
+// descarta em seguida. O login "de verdade" da aba não é afetado.
+async function verifyTeamPassword(pwd){
+  const check=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {error}=await check.auth.signInWithPassword({email:SHARED_EMAIL,password:pwd});
+  return !error;
+}
+// Gaveta de confirmação de exclusão: pede quem está excluindo (fica no
+// histórico) e a senha da equipe de novo, como barreira extra contra clique
+// sem querer. Resolve com o nome digitado, ou null se cancelado.
+function showDeleteGate(nome){
+  return new Promise(resolve=>{
+    const scrim=document.createElement('div');scrim.className='scrim';
+    const box=document.createElement('div');box.className='drawer gate';
+    box.innerHTML=`
+      <h3>Excluir atividade</h3>
+      <p class="title">${esc(nome)}</p>
+      <div class="f"><label>Quem está excluindo?</label><input id="delQuem" list="delQuemList" placeholder="seu nome">
+        <datalist id="delQuemList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+      </div>
+      <div class="f"><label>Senha da equipe</label><input type="password" id="delPwd" placeholder="senha"></div>
+      <div class="acts"><button class="danger" id="delGo" type="button">Excluir</button><button class="ghost" id="delCancel" type="button">Cancelar</button></div>
+      <p class="gateErr" id="delErr"></p>`;
+    document.body.appendChild(scrim);document.body.appendChild(box);
+    const quem=box.querySelector('#delQuem'),pwd=box.querySelector('#delPwd'),err=box.querySelector('#delErr'),
+          go=box.querySelector('#delGo'),cancel=box.querySelector('#delCancel');
+    quem.focus();
+    function cleanup(){ scrim.remove(); box.remove(); }
+    cancel.onclick=()=>{ cleanup(); resolve(null); };
+    scrim.onclick=()=>{ cleanup(); resolve(null); };
+    async function tryDelete(){
+      const quemVal=quem.value.trim();
+      if(!quemVal){ err.textContent='Diz quem está excluindo.'; quem.focus(); return; }
+      go.disabled=true;err.textContent='';
+      const ok=await verifyTeamPassword(pwd.value);
+      if(!ok){
+        err.textContent='Senha incorreta.';
+        pwd.value='';pwd.focus();go.disabled=false;
+        return;
+      }
+      cleanup();
+      resolve(quemVal);
+    }
+    go.onclick=tryDelete;
+    quem.onkeydown=e=>{ if(e.key==='Enter') pwd.focus(); };
+    pwd.onkeydown=e=>{ if(e.key==='Enter') tryDelete(); };
+  });
+}
 function toast(msg){
   const t=document.createElement('div');t.className='toast';t.textContent=msg;
   document.body.appendChild(t);setTimeout(()=>t.remove(),3200);
@@ -581,7 +649,7 @@ function render(){
   const prevScroller=m.querySelector('.scroller');
   const prevScrollLeft=prevScroller?prevScroller.scrollLeft:null;
   m.innerHTML='';
-  m.appendChild(view==='time'?buildTimeline():buildBoard());
+  m.appendChild(view==='time'?buildTimeline():view==='board'?buildBoard():buildDeleted());
   if(prevScrollLeft!==null){
     const sc=m.querySelector('.scroller');
     if(sc) sc.scrollLeft=prevScrollLeft;
@@ -973,6 +1041,33 @@ function buildBoard(){
   return b;
 }
 
+/* ---------- excluídos ---------- */
+function fmtDateTime(iso){
+  if(!iso) return '—';
+  const d=new Date(iso);
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function buildDeleted(){
+  const list=(state.deletados||[]).slice()
+    .sort((x,y)=>new Date(y.excluidoEm)-new Date(x.excluidoEm));
+  if(!list.length){
+    const e=document.createElement('div');
+    e.className='empty';
+    e.textContent='Nenhuma atividade excluída ainda.';
+    return e;
+  }
+  const wrap=document.createElement('div');
+  wrap.innerHTML=list.map(x=>`
+    <div class="delRow">
+      <span class="t">${esc(x.nome)}</span>
+      <span class="m">${esc(x.fase||'—')}</span>
+      <span class="m">excluído por ${esc(x.excluidoPor||'—')}</span>
+      <span class="m">${fmtDateTime(x.excluidoEm)}</span>
+    </div>`).join('');
+  return wrap;
+}
+
 /* ---------- gaveta ---------- */
 function openDrawer(id){
   closeDrawer();
@@ -1104,10 +1199,21 @@ function openDrawer(id){
   }
   saveBtn.onclick=doSave;
   d.querySelector('#fDel').onclick=async()=>{
-    if(!confirm('Excluir esta atividade? Não tem como desfazer.')) return;
+    const alvo=state.acts.find(x=>x.id===id);
+    if(!alvo){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
+    const quem=await showDeleteGate(alvo.nome);
+    if(!quem) return;
     state.acts=state.acts.filter(x=>x.id!==id);
+    state.deletados=state.deletados||[];
+    state.deletados.push({
+      id:alvo.id,nome:alvo.nome,fase:(PHASES[alvo.fase]&&PHASES[alvo.fase].n)||'',
+      resp:alvo.resp||'',ini:alvo.ini||'',fim:alvo.fim||'',pct:alvo.pct||0,
+      link:alvo.link||'',nota:alvo.nota||'',
+      excluidoPor:quem,excluidoEm:new Date().toISOString()
+    });
     const ok=await saveNow(state,{deletedIds:new Set([id])});
     if(ok){ closeDrawer(); render(); toast('Atividade excluída'); }
+    else{ toast('Não deu para excluir: tente de novo.'); }
   };
   // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo
   // → Fornecedor/Valor das 3 linhas de orçamento → Link); do Link, Enter vai
@@ -1172,6 +1278,7 @@ function textW(s){
 /* ---------- controles ---------- */
 document.getElementById('vTime').onclick=()=>{view='time';syncSeg();render()};
 document.getElementById('vBoard').onclick=()=>{view='board';syncSeg();render()};
+document.getElementById('vDel').onclick=()=>{view='del';syncSeg();render()};
 document.getElementById('zoomGrp').onclick=e=>{
   const b=e.target.closest('button');if(!b)return;
   zoom=Number(b.dataset.z);syncSeg();render();
@@ -1195,6 +1302,7 @@ document.getElementById('signOut').onclick=async()=>{
 function syncSeg(){
   document.getElementById('vTime').setAttribute('aria-pressed',view==='time');
   document.getElementById('vBoard').setAttribute('aria-pressed',view==='board');
+  document.getElementById('vDel').setAttribute('aria-pressed',view==='del');
   [...document.querySelectorAll('#zoomGrp button')].forEach(b=>
     b.setAttribute('aria-pressed',Number(b.dataset.z)===zoom));
 }
@@ -1253,6 +1361,7 @@ function syncSeg(){
   }
   state.phases=(state.phases&&state.phases.length)?state.phases:DEFAULT_PHASES.map(p=>({...p}));
   PHASES=state.phases;
+  state.deletados=state.deletados||[];
   render();
   const sc=document.querySelector('.scroller');
   if(sc){const {t0}=span();sc.scrollLeft=Math.max(0,X(t0,today())-sc.clientWidth*0.25)}
@@ -1263,6 +1372,7 @@ function syncSeg(){
       state=payload.new.data;
       state.phases=(state.phases&&state.phases.length)?state.phases:DEFAULT_PHASES.map(p=>({...p}));
       PHASES=state.phases;
+      state.deletados=state.deletados||[];
       render();
     })
     .subscribe();
