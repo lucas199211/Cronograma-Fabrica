@@ -292,6 +292,7 @@ h1{
 }
 .cotRm:hover{color:#8C2E2A;border-color:#8C2E2A}
 .cotUploading{font-family:var(--mono);font-size:9.5px;color:var(--ink-3)}
+#fCotAdd{margin-top:7px}
 .drawer .acts{display:flex;gap:8px;margin-top:20px}
 .solid{border:1px solid var(--ink);background:var(--ink);color:var(--panel);padding:8px 14px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;flex:1}
 .danger{border:1px solid var(--line);background:transparent;color:#8C2E2A;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase}
@@ -1124,10 +1125,15 @@ function openDrawer(id){
   const a=state.acts.find(x=>x.id===id);
   if(!a)return;
   editing=id;
-  // estado dos 3 anexos, separado dos inputs de texto: upload/remoção
-  // salvam na hora (não esperam o botão Salvar), então precisam de um lugar
-  // pra viver que sobreviva a re-render da célula sem depender do DOM
-  let cotAnexos=[0,1,2].map(i=>(a.cotacoes&&a.cotacoes[i]&&a.cotacoes[i].anexo)||null);
+  // começa com pelo menos 3 linhas (ou mais, se a atividade já tiver sido
+  // salva com linhas extras adicionadas via "+ linha"). cotCount cresce
+  // conforme se adiciona linha; cotAnexos guarda o anexo de cada uma,
+  // separado dos inputs de texto — upload/remoção salvam na hora (não
+  // esperam o botão Salvar), então precisam de um lugar pra viver que
+  // sobreviva a re-render da célula sem depender do DOM
+  let cotCount=Math.max(3,(a.cotacoes&&a.cotacoes.length)||0);
+  let cotAnexos=[];
+  for(let i=0;i<cotCount;i++) cotAnexos.push((a.cotacoes&&a.cotacoes[i]&&a.cotacoes[i].anexo)||null);
   function attachCellHTML(i){
     const anexo=cotAnexos[i];
     if(!anexo) return `<span class="cotAttach" data-i="${i}">
@@ -1139,6 +1145,11 @@ function openDrawer(id){
         <button type="button" class="cotRm" data-i="${i}" title="Remover anexo">×</button>
         <input type="file" class="cotFile" data-i="${i}" style="display:none">
       </span>`;
+  }
+  function cotRowHTML(i,forn,valor){
+    return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(forn||'')}">
+            <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
+            ${attachCellHTML(i)}`;
   }
   const scrim=document.createElement('div');scrim.className='scrim';scrim.onclick=closeDrawer;
   const d=document.createElement('div');d.className='drawer';
@@ -1155,12 +1166,11 @@ function openDrawer(id){
     </div></div>
     <div class="f"><label>Orçamentos</label>
       <div class="cotHead"><span>Fornecedor</span><span>Valor</span><span></span></div>
-      <div class="cotGrid" id="fCot">${[0,1,2].map(i=>{
+      <div class="cotGrid" id="fCot">${Array.from({length:cotCount},(_,i)=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
-        return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(c.forn||'')}">
-                <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(c.valor||''))}">
-                ${attachCellHTML(i)}`;
+        return cotRowHTML(i,c.forn,c.valor);
       }).join('')}</div>
+      <button type="button" class="addbtn" id="fCotAdd">+ linha</button>
     </div>
     <div class="f"><label for="fLink">Link</label><input id="fLink" type="url" value="${esc(a.link||'')}" placeholder="link do sharepoint"></div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
@@ -1188,13 +1198,20 @@ function openDrawer(id){
   });
   maskDate(d.querySelector('#fIni'));
   maskDate(d.querySelector('#fFim'));
+  // Linhas de orçamento podem crescer (botão "+ linha"), então máscara de
+  // dinheiro e Enter usam delegação de evento no container inteiro (#fCot)
+  // em vez de vincular em cada input — assim funcionam em linhas novas
+  // automaticamente, sem precisar religar nada quando uma é adicionada.
+  const fCot=d.querySelector('#fCot');
   // máscara: aplica fmtMoney a cada tecla (ponto de milhar automático,
   // vírgula pra centavos se a pessoa digitar uma). O cursor é reposicionado
   // contando quantos dígitos/vírgula existiam antes dele (ignorando "R$ " e
   // os pontos de milhar, que são inseridos automaticamente) e andando esse
   // tanto na string já formatada — mesma ideia do maskDate acima. Apagar
   // tudo deixa o campo vazio de verdade, pra dar pra limpar o valor.
-  const maskMoney=el=>el.addEventListener('input',()=>{
+  fCot.addEventListener('input',e=>{
+    const el=e.target.closest('.cotValor');
+    if(!el)return;
     const contentBefore=el.value.slice(0,el.selectionStart).replace(/[^\d,]/g,'').length;
     const formatted=fmtMoney(el.value);
     el.value=formatted;
@@ -1207,14 +1224,33 @@ function openDrawer(id){
     }
     el.setSelectionRange(newPos,newPos);
   });
-  d.querySelectorAll('.cotValor').forEach(maskMoney);
+  // Enter desce Fornecedor -> Valor -> próxima linha, na ordem em que os
+  // campos aparecem no DOM; da última linha, vai pro Link.
+  fCot.addEventListener('keydown',e=>{
+    if(e.key!=='Enter')return;
+    const cur=e.target.closest('.cotForn,.cotValor');
+    if(!cur)return;
+    e.preventDefault();
+    const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')];
+    const idx=focusables.indexOf(cur);
+    if(idx>=0&&idx<focusables.length-1) focusables[idx+1].focus();
+    else d.querySelector('#fLink').focus();
+  });
+  // "+ linha": adiciona mais um par fornecedor/valor pra comparar orçamento
+  // de mais um fornecedor, além dos 3 iniciais.
+  d.querySelector('#fCotAdd').onclick=()=>{
+    const i=cotCount;
+    cotCount++;
+    cotAnexos.push(null);
+    fCot.insertAdjacentHTML('beforeend',cotRowHTML(i));
+    fCot.querySelector(`.cotForn[data-i="${i}"]`).focus();
+  };
 
   // anexos: clipe -> abre o seletor de arquivo escondido; ao escolher,
   // envia pro Storage e já salva a referência na hora (não espera o botão
   // Salvar) — assim o anexo não se perde se a pessoa fechar a gaveta sem
   // clicar em Salvar. Como isso salva tudo junto (via syncCurFromFields,
   // mais abaixo), o que já estava digitado nos outros campos vai junto.
-  const fCot=d.querySelector('#fCot');
   function renderAttachCell(i){
     const cell=fCot.querySelector(`.cotAttach[data-i="${i}"]`);
     if(cell) cell.outerHTML=attachCellHTML(i);
@@ -1304,9 +1340,9 @@ function openDrawer(id){
     cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
-    cur.cotacoes=[0,1,2].map(i=>({
-      forn:d.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
-      valor:d.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
+    cur.cotacoes=Array.from({length:cotCount},(_,i)=>({
+      forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
+      valor:fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
       anexo:cotAnexos[i]||null
     }));
     cur.link=d.querySelector('#fLink').value.trim();
@@ -1354,11 +1390,13 @@ function openDrawer(id){
     else{ toast('Não deu para excluir: tente de novo.'); }
   };
   // Enter desce de campo em campo (Atividade → Responsável → Início → Prazo
-  // → Fornecedor/Valor das 3 linhas de orçamento → Link); do Link, Enter vai
+  // → Fornecedor/Valor das linhas de orçamento → Link); do Link, Enter vai
   // pro botão Salvar — só ali (ou clicando) é que salva de verdade e fecha a
   // caixa. Assim dá pra preencher tudo só pelo teclado sem fechar a caixa
   // sem querer no meio do preenchimento. Fica de fora dessa cadeia só a
   // Observação (textarea), onde Enter precisa continuar quebrando linha.
+  // (A parte de dentro do bloco de orçamento é tratada por delegação de
+  // evento lá em cima, pra funcionar com qualquer quantidade de linhas.)
   const goNext=(fromSel,toSel)=>{
     d.querySelector(fromSel).addEventListener('keydown',e=>{
       if(e.key!=='Enter')return;
@@ -1370,12 +1408,6 @@ function openDrawer(id){
   goNext('#fResp','#fIni');
   goNext('#fIni','#fFim');
   goNext('#fFim','.cotForn[data-i="0"]');
-  goNext('.cotForn[data-i="0"]','.cotValor[data-i="0"]');
-  goNext('.cotValor[data-i="0"]','.cotForn[data-i="1"]');
-  goNext('.cotForn[data-i="1"]','.cotValor[data-i="1"]');
-  goNext('.cotValor[data-i="1"]','.cotForn[data-i="2"]');
-  goNext('.cotForn[data-i="2"]','.cotValor[data-i="2"]');
-  goNext('.cotValor[data-i="2"]','#fLink');
   d.querySelector('#fLink').addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     e.preventDefault();
