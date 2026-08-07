@@ -1207,7 +1207,7 @@ function openDrawer(id){
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
-    <div class="f"><label>Orçamentos</label>
+    <div class="f"><label>Arquivos</label>
       <div class="cotModeSeg" id="fCotMode">
         <button type="button" data-m="orcamento" aria-pressed="${cotModo==='orcamento'}">Orçamentos</button>
         <button type="button" data-m="documento" aria-pressed="${cotModo==='documento'}">Documentos</button>
