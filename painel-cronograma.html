@@ -1360,7 +1360,7 @@ function openDrawer(id){
     const picked=file.files[0];
     const cell=fCot.querySelector(`.cotAttach[data-i="${i}"]`);
     cell.innerHTML='<span class="cotUploading">enviando…</span>';
-    const path=`${id}/cot${i}/${Date.now()}-${picked.name}`;
+    const path=`${id}/cot${i}/${Date.now()}-${sanitizeFilename(picked.name)}`;
     const {error:upErr}=await db.storage.from(ATTACH_BUCKET).upload(path,picked);
     if(upErr){ toast('Não deu para enviar o anexo: '+upErr.message); renderAttachCell(i); return; }
     cotAnexos[i]={path,nome:picked.name};
@@ -1509,6 +1509,15 @@ function exportCSV(){
 
 /* ---------- utilidades ---------- */
 function uid(){return Math.random().toString(36).slice(2,10)}
+// nome de arquivo com espaço/acento derruba o Storage do Supabase com
+// "Invalid key" — usada só pra montar a chave de armazenamento; o nome
+// original continua sendo mostrado pra pessoa normalmente
+function sanitizeFilename(name){
+  const lo=String.fromCodePoint(0x300),hi=String.fromCodePoint(0x36f);
+  const diacriticos=new RegExp('['+lo+'-'+hi+']','g');
+  const semAcento=name.normalize('NFD').replace(diacriticos,'');
+  return semAcento.replace(/[^\w.\-]+/g,'_');
+}
 const txtCanvas=document.createElement('canvas').getContext('2d');
 function textW(s){
   txtCanvas.font='500 9.5px "IBM Plex Mono","SF Mono",Menlo,monospace';
