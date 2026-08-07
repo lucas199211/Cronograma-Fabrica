@@ -273,10 +273,13 @@ h1{
   font-family:var(--mono);font-size:11px;color:var(--ink-2);
 }
 .pcts button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
-.cotHead{display:grid;grid-template-columns:.8fr 1.3fr 34px;gap:6px;margin-bottom:4px}
+.cotHead{display:grid;grid-template-columns:16px .8fr 1.3fr 34px;gap:6px;margin-bottom:4px}
 .cotHead span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
-.cotGrid{display:grid;grid-template-columns:.8fr 1.3fr auto;gap:6px;align-items:center}
+.cotGrid{display:grid;grid-template-columns:16px .8fr 1.3fr auto;gap:6px;align-items:center}
 .cotGrid input{font-size:12.5px}
+.cotDocChk{width:15px;height:15px;margin:0;cursor:pointer}
+.cotForn.cotDoc{grid-column:2/4}
+.cotValor.cotHidden{display:none}
 .cotAttach{display:flex;align-items:center;gap:3px}
 .cotPick{
   border:1px solid var(--line);background:var(--concrete);color:var(--ink-2);
@@ -1169,9 +1172,14 @@ function openDrawer(id){
         <input type="file" class="cotFile" data-i="${i}" style="display:none">
       </span>`;
   }
-  function cotRowHTML(i,forn,valor){
-    return `<input type="text" class="cotForn" data-i="${i}" placeholder="fornecedor" value="${esc(forn||'')}">
-            <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
+  // "doc" marca a linha como um anexo qualquer (não é orçamento de
+  // fornecedor): o campo Fornecedor vira o nome do documento e ocupa
+  // também o espaço do Valor, que some (não faz sentido pedir preço de um
+  // documento que não é cotação).
+  function cotRowHTML(i,forn,valor,doc){
+    return `<input type="checkbox" class="cotDocChk" data-i="${i}" ${doc?'checked':''} title="Marcar como documento (não é orçamento de fornecedor)">
+            <input type="text" class="cotForn${doc?' cotDoc':''}" data-i="${i}" placeholder="${doc?'documento':'fornecedor'}" value="${esc(forn||'')}">
+            <input type="text" class="cotValor${doc?' cotHidden':''}" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
             ${attachCellHTML(i)}`;
   }
   const scrim=document.createElement('div');scrim.className='scrim';scrim.onclick=closeDrawer;
@@ -1188,10 +1196,10 @@ function openDrawer(id){
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
     <div class="f"><label>Orçamentos</label>
-      <div class="cotHead"><span>Fornecedor</span><span>Valor</span><span></span></div>
+      <div class="cotHead"><span></span><span>Fornecedor</span><span>Valor</span><span></span></div>
       <div class="cotGrid" id="fCot">${Array.from({length:cotCount},(_,i)=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
-        return cotRowHTML(i,c.forn,c.valor);
+        return cotRowHTML(i,c.forn,c.valor,c.doc);
       }).join('')}</div>
       <button type="button" class="addbtn" id="fCotAdd">+ linha</button>
     </div>
@@ -1248,13 +1256,15 @@ function openDrawer(id){
     el.setSelectionRange(newPos,newPos);
   });
   // Enter desce Fornecedor -> Valor -> próxima linha, na ordem em que os
-  // campos aparecem no DOM; da última linha, vai pro Link.
+  // campos aparecem no DOM; da última linha, vai pro Link. Pula o Valor
+  // escondido (linhas marcadas como documento), senão o Enter tentaria
+  // focar um campo invisível e travaria ali.
   fCot.addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     const cur=e.target.closest('.cotForn,.cotValor');
     if(!cur)return;
     e.preventDefault();
-    const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')];
+    const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')].filter(el=>!el.classList.contains('cotHidden'));
     const idx=focusables.indexOf(cur);
     if(idx>=0&&idx<focusables.length-1) focusables[idx+1].focus();
     else d.querySelector('#fLink').focus();
@@ -1308,6 +1318,18 @@ function openDrawer(id){
     }
   });
   fCot.addEventListener('change',async e=>{
+    const chk=e.target.closest('.cotDocChk');
+    if(chk){
+      const i=chk.dataset.i;
+      const doc=chk.checked;
+      const forn=fCot.querySelector(`.cotForn[data-i="${i}"]`);
+      const valor=fCot.querySelector(`.cotValor[data-i="${i}"]`);
+      forn.placeholder=doc?'documento':'fornecedor';
+      forn.classList.toggle('cotDoc',doc);
+      valor.classList.toggle('cotHidden',doc);
+      if(doc) valor.value='';
+      return;
+    }
     const file=e.target.closest('.cotFile');
     if(!file||!file.files[0]) return;
     const i=Number(file.dataset.i);
@@ -1363,11 +1385,15 @@ function openDrawer(id){
     cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
-    cur.cotacoes=Array.from({length:cotCount},(_,i)=>({
-      forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
-      valor:fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
-      anexo:cotAnexos[i]||null
-    }));
+    cur.cotacoes=Array.from({length:cotCount},(_,i)=>{
+      const doc=fCot.querySelector(`.cotDocChk[data-i="${i}"]`).checked;
+      return {
+        forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
+        valor:doc?'':fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
+        doc,
+        anexo:cotAnexos[i]||null
+      };
+    });
     cur.link=d.querySelector('#fLink').value.trim();
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
