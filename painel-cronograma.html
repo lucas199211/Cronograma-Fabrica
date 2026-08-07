@@ -528,8 +528,13 @@ async function saveNow(dataToSave,opts){
     const deletados=mergeDeletados(payload.deletados,remote.deletados);
     toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs),deletados};
   }
-  const {error}=await db.from('cronograma_state')
+  const doUpsert=()=>db.from('cronograma_state')
     .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
+  let {error}=await doUpsert();
+  if(error&&isAuthError(error)){
+    await recoverAuth();
+    ({error}=await doUpsert());
+  }
   if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
   return true;
 }
@@ -565,6 +570,30 @@ async function ensureAuth(){
   if(session){ touchSession(); return; }
   await showGate();
   touchSession();
+}
+// Quando um salvamento falha por sessão inválida/expirada (a aba fica
+// aberta pra sempre com o salvamento automático de 60 em 60 segundos —
+// se a sessão caducar nesse meio tempo, toda tentativa seguinte falhava
+// silenciosamente, gerando um erro atrás do outro sem a pessoa nunca
+// ficar sabendo), tenta renovar a sessão sozinho; se não der, limpa a
+// sessão velha e pede login de novo. O "reauthPromise" evita abrir vários
+// gates ao mesmo tempo se mais de um salvamento falhar junto.
+let reauthPromise=null;
+function isAuthError(error){
+  if(!error) return false;
+  return error.code==='42501'||error.status===401||/row-level security|JWT/i.test(error.message||'');
+}
+async function recoverAuth(){
+  if(!reauthPromise){
+    reauthPromise=(async()=>{
+      const {error:refreshErr}=await db.auth.refreshSession();
+      if(refreshErr){
+        await db.auth.signOut();
+        await ensureAuth();
+      }
+    })();
+  }
+  try{ await reauthPromise; } finally{ reauthPromise=null; }
 }
 function showGate(){
   return new Promise(resolve=>{
