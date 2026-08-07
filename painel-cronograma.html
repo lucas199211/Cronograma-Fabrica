@@ -557,6 +557,7 @@ setInterval(()=>saveNow(state),60000);
 
 /* ============================ autenticação ============================ */
 const LASTSEEN_KEY='cronograma-planta-lastseen';
+const WHOAMI_KEY='cronograma-planta-quemsou';
 const SESSION_TTL=10*60*1000;
 function touchSession(){
   try{ localStorage.setItem(LASTSEEN_KEY,String(Date.now())); }catch(e){}
@@ -605,18 +606,26 @@ async function recoverAuth(){
 }
 function showGate(){
   return new Promise(resolve=>{
+    let lastName='';
+    try{ lastName=localStorage.getItem(WHOAMI_KEY)||''; }catch(e){}
     const scrim=document.createElement('div');scrim.className='scrim';
     const box=document.createElement('div');box.className='drawer gate';
     box.innerHTML=`
       <h3>Acesso restrito</h3>
       <p class="title">Senha da equipe</p>
+      <div class="f"><label>Quem é você?</label><input id="gateQuem" list="gateQuemList" placeholder="seu nome" value="${esc(lastName)}">
+        <datalist id="gateQuemList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+      </div>
       <div class="f"><input type="password" id="gatePwd" placeholder="senha"></div>
       <div class="acts"><button class="solid" id="gateGo">Entrar</button></div>
       <p class="gateErr" id="gateErr"></p>`;
     document.body.appendChild(scrim);document.body.appendChild(box);
-    const pwd=box.querySelector('#gatePwd'),err=box.querySelector('#gateErr'),go=box.querySelector('#gateGo');
-    pwd.focus();
+    const quem=box.querySelector('#gateQuem'),pwd=box.querySelector('#gatePwd'),
+          err=box.querySelector('#gateErr'),go=box.querySelector('#gateGo');
+    if(lastName) pwd.focus(); else quem.focus();
     async function tryLogin(){
+      const quemVal=quem.value.trim();
+      if(!quemVal){ err.textContent='Diz quem é você.'; quem.focus(); return; }
       go.disabled=true;err.textContent='';
       const {error}=await db.auth.signInWithPassword({email:SHARED_EMAIL,password:pwd.value});
       if(error){
@@ -624,10 +633,12 @@ function showGate(){
         pwd.value='';pwd.focus();go.disabled=false;
         return;
       }
+      try{ localStorage.setItem(WHOAMI_KEY,quemVal); }catch(e){}
       scrim.remove();box.remove();
       resolve();
     }
     go.onclick=tryLogin;
+    quem.onkeydown=e=>{ if(e.key==='Enter') pwd.focus(); };
     pwd.onkeydown=e=>{ if(e.key==='Enter') tryLogin(); };
   });
 }
