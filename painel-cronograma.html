@@ -153,9 +153,16 @@ h1{
 
 .actRail{
   height:34px;box-sizing:border-box;border-bottom:1px solid var(--line-2);
-  display:flex;align-items:center;gap:8px;padding:0 10px 0 24px;
+  display:flex;align-items:center;gap:6px;padding:0 10px 0 10px;
 }
 .actRail:hover{background:#fff}
+.actGrip{
+  cursor:grab;color:var(--ink-3);flex:0 0 14px;width:14px;height:34px;
+  display:flex;align-items:center;justify-content:center;
+}
+.actGrip:hover{color:var(--ink)}
+.actGrip:active{cursor:grabbing}
+.phaseRail.dropTarget,.actRail.dropTarget,.addRail.dropTarget{background:#163D3422}
 .actLane{height:34px;box-sizing:border-box;border-bottom:1px solid var(--line-2)}
 .name{
   border:0;background:transparent;text-align:left;padding:0;font-size:12.5px;color:var(--ink);
@@ -421,6 +428,7 @@ const SHARED_EMAIL='equipe@cronograma.local';
 const ATTACH_BUCKET='anexos';
 const PAPERCLIP_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 015 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>';
 const FLAG_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>';
+const GRIP_SVG='<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
 const db=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
 
 let state={acts:[]};
@@ -811,6 +819,14 @@ function moveGroup(pi,dir){
   }
   save();render();
 }
+// Move uma atividade pra outro grupo (arrastar a alça até lá e soltar).
+function moveActToPhase(actId,targetPi){
+  const a=state.acts.find(x=>x.id===actId);
+  if(!a||a.fase===targetPi) return;
+  a.fase=targetPi;
+  a._ts=Date.now();
+  save();render();
+}
 
 function buildTimeline(){
   const {t0,t1,days}=span();
@@ -876,7 +892,7 @@ function buildTimeline(){
     const collapsed=collapsedPhases.has(pi);
     const done=list.filter(a=>(a.pct||0)>=100).length;
     const pr=document.createElement('div');
-    pr.className='phaseRail';
+    pr.className='phaseRail';pr.dataset.pi=pi;
     pr.innerHTML=`<button class="collapseBtn" aria-expanded="${!collapsed}" title="${collapsed?'Expandir grupo':'Recolher grupo'}">▾</button>
         <span class="moveGrp">
           <button class="moveBtn" data-dir="-1" title="Mover grupo para cima" ${pi===0?'disabled':''}>▲</button>
@@ -918,7 +934,12 @@ function buildTimeline(){
     list.forEach(a=>{
       const st=statusOf(a);
       const rail=document.createElement('div');
-      rail.className='actRail'+(st==='feito'?' done':'');
+      rail.className='actRail'+(st==='feito'?' done':'');rail.dataset.pi=pi;
+      const grip=document.createElement('span');
+      grip.className='actGrip';grip.draggable=true;grip.title='Arraste para mover para outro grupo';
+      grip.innerHTML=GRIP_SVG;
+      grip.ondragstart=e=>{ e.dataTransfer.setData('text/plain',a.id); e.dataTransfer.effectAllowed='move'; };
+      rail.appendChild(grip);
       const nb=document.createElement('button');
       nb.className='name';nb.textContent=a.nome;nb.title=a.nome;
       nb.onclick=()=>openDrawer(a.id);
@@ -987,7 +1008,7 @@ function buildTimeline(){
     });
 
     if(!onlyLate){
-      const rl=document.createElement('div');rl.className='addRail';
+      const rl=document.createElement('div');rl.className='addRail';rl.dataset.pi=pi;
       const btn=document.createElement('button');
       btn.className='addbtn';btn.textContent='+ atividade';
       btn.onclick=()=>{
@@ -1045,6 +1066,29 @@ function buildTimeline(){
     e.textContent=onlyLate?'Nada atrasado. Bom sinal.':'Sem atividades. Use "+ atividade" em qualquer fase.';
     track.appendChild(e);
   }
+  // Arrastar a alça (▤) de uma atividade e soltar em cima de qualquer linha
+  // de outro grupo (cabeçalho, atividade ou "+ atividade") move ela pra
+  // esse grupo. Delegado no railcol inteiro (em vez de um listener por
+  // linha) usando o data-pi que cada linha carrega — bem mais simples do
+  // que religar drag/drop em cada elemento a cada render.
+  let dropRow=null;
+  const clearDrop=()=>{ if(dropRow){ dropRow.classList.remove('dropTarget'); dropRow=null; } };
+  railcol.addEventListener('dragover',e=>{
+    const row=e.target.closest('[data-pi]');
+    if(!row)return;
+    e.preventDefault();
+    if(dropRow!==row){ clearDrop(); row.classList.add('dropTarget'); dropRow=row; }
+  });
+  railcol.addEventListener('dragleave',e=>{
+    if(!railcol.contains(e.relatedTarget)) clearDrop();
+  });
+  railcol.addEventListener('drop',e=>{
+    const row=e.target.closest('[data-pi]');
+    clearDrop();
+    if(!row)return;
+    e.preventDefault();
+    moveActToPhase(e.dataTransfer.getData('text/plain'),Number(row.dataset.pi));
+  });
   attachDrag(wrap,t0);
   return outer;
 }
