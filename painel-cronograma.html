@@ -168,6 +168,20 @@ h1{
 .rowAnexo svg{display:block;width:12px;height:12px}
 .cardAnexo{color:var(--ink-3);display:inline-flex;align-items:center;vertical-align:-1px}
 .cardAnexo svg{display:block;width:11px;height:11px}
+.rowNota,.cardNota{
+  position:relative;color:#8C6A2E;flex:0 0 auto;display:inline-flex;align-items:center;cursor:default;
+}
+.cardNota{vertical-align:-1px}
+.rowNota svg{display:block;width:12px;height:12px}
+.cardNota svg{display:block;width:11px;height:11px}
+.rowNota .tip,.cardNota .tip{
+  display:none;position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:6px;
+  background:var(--ink);color:var(--panel);padding:8px 10px;border-radius:2px;
+  font-family:var(--sans);font-size:12px;line-height:1.4;font-weight:400;
+  width:220px;max-width:60vw;max-height:200px;overflow-y:auto;white-space:pre-wrap;text-align:left;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);z-index:95;
+}
+.rowNota:hover .tip,.cardNota:hover .tip{display:block}
 .setdate{
   border:1px dashed var(--line);background:transparent;color:var(--ink-3);
   font-family:var(--mono);font-size:9px;padding:2px 5px;letter-spacing:.06em;white-space:nowrap;
@@ -406,6 +420,7 @@ const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 const SHARED_EMAIL='equipe@cronograma.local';
 const ATTACH_BUCKET='anexos';
 const PAPERCLIP_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 015 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>';
+const FLAG_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>';
 const db=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
 
 let state={acts:[]};
@@ -487,6 +502,9 @@ function lateDays(a){
 }
 function hasAnexo(a){
   return (a.cotacoes||[]).some(c=>c&&c.anexo);
+}
+function hasNota(a){
+  return !!(a.nota&&a.nota.trim());
 }
 
 /* ============================ armazenamento (supabase) ============================ */
@@ -910,6 +928,12 @@ function buildTimeline(){
         ic.className='rowAnexo';ic.title='Tem anexo de orçamento';ic.innerHTML=PAPERCLIP_SVG;
         rail.appendChild(ic);
       }
+      if(hasNota(a)){
+        const fl=document.createElement('span');
+        fl.className='rowNota';
+        fl.innerHTML=FLAG_SVG+`<span class="tip">${esc(a.nota)}</span>`;
+        rail.appendChild(fl);
+      }
       if(a.resp){const w=document.createElement('span');w.className='who';w.textContent=a.resp;rail.appendChild(w)}
       if(st==='semdata'){
         const b=document.createElement('button');
@@ -1099,7 +1123,7 @@ function buildBoard(){
       card.style.borderLeftColor=PHASES[a.fase].c;
       card.draggable=true;
       card.dataset.id=a.id;
-      card.innerHTML=`<div class="t">${esc(a.nome)}${hasAnexo(a)?` <span class="cardAnexo" title="Tem anexo de orçamento">${PAPERCLIP_SVG}</span>`:''}</div>
+      card.innerHTML=`<div class="t">${esc(a.nome)}${hasAnexo(a)?` <span class="cardAnexo" title="Tem anexo de orçamento">${PAPERCLIP_SVG}</span>`:''}${hasNota(a)?` <span class="cardNota">${FLAG_SVG}<span class="tip">${esc(a.nota)}</span></span>`:''}</div>
         <div class="m"><span>${esc(PHASES[a.fase].n)}</span>
         ${a.resp?'<span>'+esc(a.resp)+'</span>':''}
         <span class="${st==='atrasado'?'d':''}">${st==='atrasado'?lateDays(a)+'d de atraso':(a.fim?'até '+fmt(a.fim):'sem data')}</span></div>`;
