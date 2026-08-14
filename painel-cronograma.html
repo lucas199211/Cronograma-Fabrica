@@ -291,6 +291,10 @@ h1{
 }
 .f input[type=date]{font-family:var(--mono);font-size:12px}
 .f textarea{resize:vertical;min-height:56px}
+.roadDatesGrid{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}
+.f.tight{margin-bottom:9px}
+.f.tight label{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f.tight input{padding:5px 7px;font-size:12px}
 .pcts{display:flex;gap:1px}
 .pcts button{
   flex:1;border:1px solid var(--line);background:var(--concrete);padding:7px 0;
@@ -701,8 +705,14 @@ async function saveNow(dataToSave,opts){
     const localComentTs=payload.comentarioGestorTs||0, remoteComentTs=remote.comentarioGestorTs||0;
     const comentarioGestor=(remoteComentTs>localComentTs&&remote.comentarioGestor!==undefined)
       ?remote.comentarioGestor:payload.comentarioGestor;
+    // datas do roteiro: mesma ideia do comentarioGestor — carimbo mais
+    // novo vence, pra não apagar um ajuste de data feito por outra pessoa
+    const localRoadTs=payload.roadmapDatesTs||0, remoteRoadTs=remote.roadmapDatesTs||0;
+    const roadmapDates=(remoteRoadTs>localRoadTs&&remote.roadmapDates!==undefined)
+      ?remote.roadmapDates:payload.roadmapDates;
     toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs),deletados,
-      comentarioGestor,comentarioGestorTs:Math.max(localComentTs,remoteComentTs)};
+      comentarioGestor,comentarioGestorTs:Math.max(localComentTs,remoteComentTs),
+      roadmapDates,roadmapDatesTs:Math.max(localRoadTs,remoteRoadTs)};
   }
   const doUpsert=()=>db.from('cronograma_state')
     .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
@@ -1870,10 +1880,14 @@ function showGestorGate(){
   return new Promise(resolve=>{
     const scrim=document.createElement('div');scrim.className='scrim';
     const box=document.createElement('div');box.className='drawer gate wide';
+    const roadFieldsHTML=ROADMAP.map((m,i)=>
+      `<div class="f tight"><label>${esc(m.t)}</label><input class="roadDateInput" data-i="${i}" value="${esc(roadmapDateFor(i))}" placeholder="ex: Out/26"></div>`).join('');
     box.innerHTML=`
       <h3>Resumo PDF</h3>
       <p class="title">Comentário do gestor</p>
       <div class="f"><textarea id="gestorTxt" placeholder="Observações gerais sobre o andamento do projeto, pra aparecer no relatório">${esc(state.comentarioGestor||'')}</textarea></div>
+      <p class="title" style="font-size:13px;margin-top:20px">Datas do roteiro</p>
+      <div class="roadDatesGrid">${roadFieldsHTML}</div>
       <div class="acts"><button class="solid" id="gestorGo" type="button">Gerar PDF</button><button class="ghost" id="gestorCancel" type="button">Cancelar</button></div>`;
     document.body.appendChild(scrim);document.body.appendChild(box);
     const txt=box.querySelector('#gestorTxt'),go=box.querySelector('#gestorGo'),cancel=box.querySelector('#gestorCancel');
@@ -1884,11 +1898,20 @@ function showGestorGate(){
     go.onclick=async()=>{
       go.disabled=true;go.textContent='Gerando...';
       const val=txt.value;
+      const newDates=[...box.querySelectorAll('.roadDateInput')].map(inp=>inp.value.trim());
+      const oldDates=ROADMAP.map((m,i)=>roadmapDateFor(i));
+      let dirty=false;
       if(val!==(state.comentarioGestor||'')){
         state.comentarioGestor=val;
         state.comentarioGestorTs=Date.now();
-        await saveNow(state);
+        dirty=true;
       }
+      if(newDates.some((v,i)=>v!==oldDates[i])){
+        state.roadmapDates=newDates;
+        state.roadmapDatesTs=Date.now();
+        dirty=true;
+      }
+      if(dirty) await saveNow(state);
       cleanup();
       resolve(val);
     };
@@ -1919,6 +1942,13 @@ const ROADMAP=[
   {t:'Final das obras',pos:'bottom',data:'Dez/27'},
   {t:'Início da operação',pos:'top',data:'Jan/28'},
 ];
+// Data de cada marco: usa o que a pessoa editou (state.roadmapDates,
+// salvo/sincronizado no diálogo do "Resumo PDF"), ou o valor padrão
+// embutido no ROADMAP se ainda não houver edição pra aquele índice.
+function roadmapDateFor(i){
+  const custom=state.roadmapDates&&state.roadmapDates[i];
+  return (custom!==undefined&&custom!==null)?custom:(ROADMAP[i].data||'');
+}
 function buildRoadmapHTML(){
   const n=ROADMAP.length;
   const edgeClass=i=>i===0?' edge-l':(i===n-1?' edge-r':'');
@@ -1927,12 +1957,12 @@ function buildRoadmapHTML(){
   // da linha do que o rótulo (rótulo-topo cresce pra cima, data-baixo cresce
   // pra baixo), igual ao layout que veio na imagem de referência.
   const top=ROADMAP.map(m=>`<div class="pdfRoadLbl top">${m.pos==='top'?esc(m.t):''}</div>`).join('');
-  const topDate=ROADMAP.map(m=>
-    `<div class="pdfRoadDateCell top">${m.pos==='top'&&m.data?`<span class="pdfRoadDate">${esc(m.data)}</span>`:''}</div>`).join('');
+  const topDate=ROADMAP.map((m,i)=>
+    `<div class="pdfRoadDateCell top">${m.pos==='top'&&roadmapDateFor(i)?`<span class="pdfRoadDate">${esc(roadmapDateFor(i))}</span>`:''}</div>`).join('');
   const dots=ROADMAP.map((m,i)=>`<div class="pdfRoadDotCell${edgeClass(i)}"><span class="pdfRoadDot"></span></div>`).join('');
   const bottom=ROADMAP.map(m=>`<div class="pdfRoadLbl bottom">${m.pos==='bottom'?esc(m.t):''}</div>`).join('');
-  const bottomDate=ROADMAP.map(m=>
-    `<div class="pdfRoadDateCell bottom">${m.pos==='bottom'&&m.data?`<span class="pdfRoadDate">${esc(m.data)}</span>`:''}</div>`).join('');
+  const bottomDate=ROADMAP.map((m,i)=>
+    `<div class="pdfRoadDateCell bottom">${m.pos==='bottom'&&roadmapDateFor(i)?`<span class="pdfRoadDate">${esc(roadmapDateFor(i))}</span>`:''}</div>`).join('');
   return `<div class="pdfSection">
     <h2>Roteiro do projeto</h2>
     <div class="pdfRoadmap">
