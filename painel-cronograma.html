@@ -399,6 +399,15 @@ h1{
 .pdfBarLabel{width:190px;flex:0 0 190px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pdfBarTrack{flex:1;height:10px;background:#eee;border-radius:2px;overflow:hidden}
 .pdfBarFill{display:block;height:100%;background:var(--ink)}
+.pdfRoadmap{border:1px solid rgba(0,0,0,.22);border-radius:10px;padding:24px 12px 16px}
+.pdfRoadGrid{display:grid;grid-template-rows:auto 16px auto;align-items:end}
+.pdfRoadLbl{grid-row:1;font-size:7.6px;font-weight:600;line-height:1.25;text-align:center;color:#222;padding:0 3px}
+.pdfRoadLbl.bottom{grid-row:3;align-self:start}
+.pdfRoadDotCell{grid-row:2;align-self:center;position:relative;display:flex;align-items:center;justify-content:center}
+.pdfRoadDotCell::before{content:'';position:absolute;left:0;right:0;top:50%;height:2px;background:var(--ink);transform:translateY(-50%)}
+.pdfRoadDotCell.edge-l::before{left:50%}
+.pdfRoadDotCell.edge-r::before{right:50%}
+.pdfRoadDot{width:8px;height:8px;border-radius:50%;background:var(--ink);border:1.5px solid #fff;position:relative;z-index:1}
 .pdfBarPct{width:70px;flex:0 0 70px;text-align:right;font-family:var(--mono);font-size:10.5px;color:#555}
 .pdfTable{width:100%;border-collapse:collapse;font-size:11px}
 .pdfTable th{
@@ -1889,6 +1898,35 @@ function showGestorGate(){
 // navegador (sem biblioteca de PDF): a pessoa escolhe "Salvar como PDF"
 // no destino. O donut é CSS puro (conic-gradient), sem lib de gráfico.
 const PDF_LIST_MAX=20;
+// Roteiro fixo do projeto (marcos de alto nível, não vem de state.acts —
+// é a mesma linha do tempo apresentada em slides pro grupo/diretoria).
+// Alterna acima/abaixo da linha, na ordem em que aparece aqui.
+const ROADMAP=[
+  {t:'Neutralizar sabor',pos:'top'},
+  {t:'Validar Planta piloto',pos:'bottom'},
+  {t:'Definir do local da fábrica',pos:'top'},
+  {t:'Definir Layout da fábrica',pos:'bottom'},
+  {t:'Orçamento dos equipamentos',pos:'top'},
+  {t:'Definir Equipamentos',pos:'bottom'},
+  {t:'Equalizar propostas',pos:'top'},
+  {t:'Início das negociações',pos:'bottom'},
+  {t:'Início das obras',pos:'top'},
+  {t:'Final das obras',pos:'bottom'},
+  {t:'Início da operação',pos:'top'},
+];
+function buildRoadmapHTML(){
+  const n=ROADMAP.length;
+  const edgeClass=i=>i===0?' edge-l':(i===n-1?' edge-r':'');
+  const top=ROADMAP.map(m=>`<div class="pdfRoadLbl top">${m.pos==='top'?esc(m.t):''}</div>`).join('');
+  const dots=ROADMAP.map((m,i)=>`<div class="pdfRoadDotCell${edgeClass(i)}"><span class="pdfRoadDot"></span></div>`).join('');
+  const bottom=ROADMAP.map(m=>`<div class="pdfRoadLbl bottom">${m.pos==='bottom'?esc(m.t):''}</div>`).join('');
+  return `<div class="pdfSection">
+    <h2>Roteiro do projeto</h2>
+    <div class="pdfRoadmap">
+      <div class="pdfRoadGrid" style="grid-template-columns:repeat(${n},1fr)">${top}${dots}${bottom}</div>
+    </div>
+  </div>`;
+}
 function buildPDFSummary(comentario){
   const A=state.acts;
   const total=A.length||1;
@@ -1941,6 +1979,7 @@ function buildPDFSummary(comentario){
         <div><span class="sw" style="background:#D8D4CB"></span>Outras (sem data / não iniciadas) — ${outras} (${pOut}%)</div>
       </div>
     </div>
+    ${buildRoadmapHTML()}
     ${comentario?`<div class="pdfSection pdfComment">
       <h2>Comentário do gestor</h2>
       <p>${esc(comentario)}</p>
