@@ -819,12 +819,27 @@ function moveGroup(pi,dir){
   }
   save();render();
 }
-// Move uma atividade pra outro grupo (arrastar a alça até lá e soltar).
-function moveActToPhase(actId,targetPi){
-  const a=state.acts.find(x=>x.id===actId);
-  if(!a||a.fase===targetPi) return;
+// Move uma atividade pra outro grupo e/ou reordena ela dentro do grupo
+// (arrastar a alça até lá e soltar). A ordem de exibição dentro de um
+// grupo segue a ordem relativa das atividades daquele grupo dentro do
+// array state.acts (o filtro por fase preserva a ordem), então reordenar
+// é remover a atividade de onde estava e reinserir logo antes de
+// "beforeActId" — sem precisar de um campo de ordem à parte. Sem
+// beforeActId, vai pro final (do grupo, já que fica depois de tudo que já
+// existia nele no array).
+function moveActTo(actId,targetPi,beforeActId){
+  if(beforeActId===actId) return; // soltou bem em cima da própria linha: nada a fazer
+  const idx=state.acts.findIndex(x=>x.id===actId);
+  if(idx===-1) return;
+  const [a]=state.acts.splice(idx,1);
   a.fase=targetPi;
   a._ts=Date.now();
+  if(beforeActId){
+    const insertIdx=state.acts.findIndex(x=>x.id===beforeActId);
+    state.acts.splice(insertIdx===-1?state.acts.length:insertIdx,0,a);
+  }else{
+    state.acts.push(a);
+  }
   save();render();
 }
 
@@ -934,7 +949,7 @@ function buildTimeline(){
     list.forEach(a=>{
       const st=statusOf(a);
       const rail=document.createElement('div');
-      rail.className='actRail'+(st==='feito'?' done':'');rail.dataset.pi=pi;
+      rail.className='actRail'+(st==='feito'?' done':'');rail.dataset.pi=pi;rail.dataset.actId=a.id;
       const grip=document.createElement('span');
       grip.className='actGrip';grip.draggable=true;grip.title='Arraste para mover para outro grupo';
       grip.innerHTML=GRIP_SVG;
@@ -1070,19 +1085,39 @@ function buildTimeline(){
   // coluna esquerda move ela pro grupo mais próximo verticalmente do ponto
   // onde soltou — não precisa acertar em cima de uma linha específica.
   // preventDefault roda sempre (não só em cima de uma linha) pra coluna
-  // inteira aceitar o solt, e o grupo é resolvido por proximidade, não por
-  // hover exato: soltar num espaço vazio entre linhas, ou levemente fora
-  // de uma linha, ainda funciona.
-  function resolveDropPhase(clientY){
+  // inteira aceitar o solt. Além do grupo, também resolve a posição: se a
+  // linha mais próxima for outra atividade, solta acima da metade dela
+  // insere antes, abaixo insere depois — permite tanto mover pra outro
+  // grupo quanto reordenar dentro do mesmo grupo.
+  function resolveDropTarget(clientY){
     const rows=[...railcol.querySelectorAll('[data-pi]')];
     if(!rows.length) return null;
-    let best=null,bestDist=Infinity;
-    rows.forEach(r=>{
+    let best=null,bestDist=Infinity,bestIdx=-1;
+    rows.forEach((r,i)=>{
       const rect=r.getBoundingClientRect();
       const dist=Math.abs((rect.top+rect.bottom)/2-clientY);
-      if(dist<bestDist){ bestDist=dist; best=r; }
+      if(dist<bestDist){ bestDist=dist; best=r; bestIdx=i; }
     });
-    return best?Number(best.dataset.pi):null;
+    if(!best) return null;
+    const targetPi=Number(best.dataset.pi);
+    // acha a próxima linha de atividade do mesmo grupo depois de "best",
+    // pra usar como "antes de" quando o solt vai depois de "best"
+    const nextActInPhase=()=>{
+      for(let i=bestIdx+1;i<rows.length;i++){
+        if(Number(rows[i].dataset.pi)!==targetPi) return null;
+        if(rows[i].dataset.actId) return rows[i].dataset.actId;
+      }
+      return null;
+    };
+    let beforeActId=null;
+    if(best.classList.contains('actRail')){
+      const rect=best.getBoundingClientRect();
+      const mid=(rect.top+rect.bottom)/2;
+      beforeActId=(clientY<mid)?best.dataset.actId:nextActInPhase();
+    }else{
+      beforeActId=nextActInPhase();
+    }
+    return {targetPi,beforeActId};
   }
   let dropPi=null;
   function setDropHighlight(pi){
@@ -1100,17 +1135,18 @@ function buildTimeline(){
   railcol.addEventListener('dragover',e=>{
     e.preventDefault();
     e.dataTransfer.dropEffect='move';
-    setDropHighlight(resolveDropPhase(e.clientY));
+    const target=resolveDropTarget(e.clientY);
+    setDropHighlight(target?target.targetPi:null);
   });
   railcol.addEventListener('dragleave',e=>{
     if(!railcol.contains(e.relatedTarget)) setDropHighlight(null);
   });
   railcol.addEventListener('drop',e=>{
     e.preventDefault();
-    const pi=resolveDropPhase(e.clientY);
+    const target=resolveDropTarget(e.clientY);
     setDropHighlight(null);
-    if(pi===null) return;
-    moveActToPhase(e.dataTransfer.getData('text/plain'),pi);
+    if(!target) return;
+    moveActTo(e.dataTransfer.getData('text/plain'),target.targetPi,target.beforeActId);
   });
   attachDrag(wrap,t0);
   return outer;
