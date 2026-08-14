@@ -1420,6 +1420,18 @@ function openDrawer(id){
             <input type="text" class="cotValor" data-i="${i}" placeholder="valor" value="${esc(fmtMoney(valor||''))}">
             ${attachCellHTML(i)}`;
   }
+  // opções do "Melhor orçamento": os fornecedores já digitados nas linhas
+  // acima (só faz sentido em modo orçamento — documento não tem cotação
+  // pra comparar). Usado tanto no HTML inicial (a partir de a.cotacoes)
+  // quanto depois, ao vivo, pra manter em sincronia com o que a pessoa
+  // digita (ver refreshMelhorOptions mais abaixo).
+  function melhorOptionsHTML(selecionado){
+    return Array.from({length:cotCount},(_,i)=>{
+      const forn=(a.cotacoes&&a.cotacoes[i]&&a.cotacoes[i].forn)||'';
+      if(!forn) return '';
+      return `<option value="${i}" ${forn===selecionado?'selected':''}>${esc(forn)}</option>`;
+    }).join('');
+  }
   const scrim=document.createElement('div');scrim.className='scrim';scrim.onclick=closeDrawer;
   const d=document.createElement('div');d.className='drawer';
   d.innerHTML=`
@@ -1445,7 +1457,13 @@ function openDrawer(id){
       }).join('')}</div>
       <button type="button" class="addbtn" id="fCotAdd">+ linha</button>
     </div>
-    <div class="f"><label for="fLink">Link</label><input id="fLink" type="url" value="${esc(a.link||'')}" placeholder="link do sharepoint"></div>
+    <div class="f" id="fMelhorWrap" style="${cotModo==='documento'?'display:none':''}">
+      <label for="fMelhor">Melhor orçamento</label>
+      <select id="fMelhor">
+        <option value="">— nenhum selecionado —</option>
+        ${melhorOptionsHTML(a.melhorOrcamento||'')}
+      </select>
+    </div>
     <div class="f"><label>Observação</label><textarea id="fNota" placeholder="o que trava, o que falta">${esc(a.nota||'')}</textarea></div>
     <div class="acts">
       <button class="solid" id="fSave" type="button">Salvar</button>
@@ -1499,7 +1517,7 @@ function openDrawer(id){
   });
   // Enter desce Fornecedor -> Valor -> próxima linha (ou só Documento ->
   // próxima linha, em modo documento), na ordem em que os campos aparecem
-  // no DOM; da última linha, vai pro Link.
+  // no DOM; da última linha, vai pro Melhor orçamento.
   fCot.addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     const cur=e.target.closest('.cotForn,.cotValor');
@@ -1508,7 +1526,12 @@ function openDrawer(id){
     const focusables=[...fCot.querySelectorAll('.cotForn,.cotValor')];
     const idx=focusables.indexOf(cur);
     if(idx>=0&&idx<focusables.length-1) focusables[idx+1].focus();
-    else d.querySelector('#fLink').focus();
+    else d.querySelector('#fMelhor').focus();
+  });
+  // mantém as opções do "Melhor orçamento" em sincronia com o que a
+  // pessoa digita nas linhas de fornecedor
+  fCot.addEventListener('input',e=>{
+    if(e.target.closest('.cotForn')) refreshMelhorOptions();
   });
   // "+ linha": adiciona mais uma linha (fornecedor/valor, ou documento,
   // conforme o modo atual) além das 3 iniciais.
@@ -1518,7 +1541,25 @@ function openDrawer(id){
     cotAnexos.push(null);
     fCot.insertAdjacentHTML('beforeend',cotRowHTML(i));
     fCot.querySelector(`.cotForn[data-i="${i}"]`).focus();
+    refreshMelhorOptions();
   };
+  // Reconstrói as opções do select "Melhor orçamento" a partir do que
+  // está digitado agora nas linhas de fornecedor (mantém a seleção atual
+  // se a opção ainda existir); esconde o campo inteiro em modo documento,
+  // já que não faz sentido escolher "melhor orçamento" entre documentos.
+  function refreshMelhorOptions(){
+    const wrap=d.querySelector('#fMelhorWrap');
+    if(!wrap) return;
+    if(cotModo==='documento'){ wrap.style.display='none'; return; }
+    wrap.style.display='';
+    const sel=d.querySelector('#fMelhor');
+    const curVal=sel.value;
+    const opts=[...fCot.querySelectorAll('.cotForn')]
+      .map((el,i)=>({i,nome:el.value.trim()})).filter(o=>o.nome);
+    sel.innerHTML='<option value="">— nenhum selecionado —</option>'+
+      opts.map(o=>`<option value="${o.i}">${esc(o.nome)}</option>`).join('');
+    if([...sel.options].some(o=>o.value===curVal)) sel.value=curVal;
+  }
   // Alterna o modo do bloco inteiro: reconstrói cabeçalho e linhas de uma
   // vez, preservando o texto já digitado em "Fornecedor"/"Documento" (é o
   // mesmo campo, só muda o que ele representa); o Valor não sobrevive à
@@ -1539,6 +1580,7 @@ function openDrawer(id){
     cotHead.innerHTML=cotHeadHTML();
     fCot.className='cotGrid'+(cotModo==='documento'?' docMode':'');
     fCot.innerHTML=Array.from({length:cotCount},(_,i)=>cotRowHTML(i,forns[i])).join('');
+    refreshMelhorOptions();
   });
 
   // anexos: clipe -> abre o seletor de arquivo escondido; ao escolher,
@@ -1601,14 +1643,15 @@ function openDrawer(id){
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
   // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
-  // andamento, orçamentos, link, observação) — mantém nome e fase, que
-  // identificam a atividade
+  // andamento, orçamentos, melhor orçamento, observação) — mantém nome e
+  // fase, que identificam a atividade
   d.querySelector('#fClear').onclick=()=>{
     d.querySelector('#fResp').value='';
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
-    d.querySelector('#fLink').value='';
+    d.querySelector('#fMelhor').value='';
+    refreshMelhorOptions();
     d.querySelector('#fNota').value='';
     pct=0;
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===0));
@@ -1641,7 +1684,10 @@ function openDrawer(id){
       valor:cotModo==='documento'?'':fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
       anexo:cotAnexos[i]||null
     }));
-    cur.link=d.querySelector('#fLink').value.trim();
+    const fMelhor=d.querySelector('#fMelhor');
+    const melhorForn=fMelhor&&fMelhor.value
+      ?fCot.querySelector(`.cotForn[data-i="${fMelhor.value}"]`):null;
+    cur.melhorOrcamento=melhorForn?melhorForn.value.trim():'';
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
   }
@@ -1704,7 +1750,7 @@ function openDrawer(id){
   goNext('#fResp','#fIni');
   goNext('#fIni','#fFim');
   goNext('#fFim','.cotForn[data-i="0"]');
-  d.querySelector('#fLink').addEventListener('keydown',e=>{
+  d.querySelector('#fMelhor').addEventListener('keydown',e=>{
     if(e.key!=='Enter')return;
     e.preventDefault();
     saveBtn.focus();
