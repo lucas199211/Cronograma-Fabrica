@@ -565,6 +565,14 @@ function fmtMoney(v){
   const grouped=intPart.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
   return 'R$ '+grouped+(decPart!==null?','+decPart:'');
 }
+// inverso do fmtMoney: "R$ 1.234,56" -> 1234.56, pra dar pra comparar
+// valores numericamente (ex: escolher o menor orçamento automaticamente)
+function parseMoneyValue(txt){
+  const raw=String(txt||'').replace(/^R\$\s*/,'').trim();
+  if(!raw) return null;
+  const n=parseFloat(raw.replace(/\./g,'').replace(',','.'));
+  return isNaN(n)?null:n;
+}
 
 /* ============================ status ============================ */
 function statusOf(a){
@@ -1408,6 +1416,11 @@ function openDrawer(id){
   // pedir preço de um anexo qualquer que não é cotação de fornecedor).
   // Troca tudo de uma vez, não linha por linha.
   let cotModo=a.cotModo==='documento'?'documento':'orcamento';
+  // se já tem uma escolha salva, trata como manual (não sobrescreve
+  // silenciosamente uma decisão que a pessoa já tomou antes); sem escolha
+  // salva ainda, o "menor valor" é selecionado sozinho assim que os
+  // valores forem preenchidos
+  let melhorManual=!!(a.melhorOrcamento);
   function cotHeadHTML(){
     return cotModo==='documento'
       ?`<span>Documento</span><span></span>`
@@ -1514,6 +1527,7 @@ function openDrawer(id){
       if(ch!=='.') count++;
     }
     el.setSelectionRange(newPos,newPos);
+    autoPickMelhor();
   });
   // Enter desce Fornecedor -> Valor -> próxima linha (ou só Documento ->
   // próxima linha, em modo documento), na ordem em que os campos aparecem
@@ -1529,9 +1543,10 @@ function openDrawer(id){
     else d.querySelector('#fMelhor').focus();
   });
   // mantém as opções do "Melhor orçamento" em sincronia com o que a
-  // pessoa digita nas linhas de fornecedor
+  // pessoa digita nas linhas de fornecedor, e puxa o de menor valor
+  // automaticamente (enquanto não houver escolha manual — ver melhorManual)
   fCot.addEventListener('input',e=>{
-    if(e.target.closest('.cotForn')) refreshMelhorOptions();
+    if(e.target.closest('.cotForn')){ refreshMelhorOptions(); autoPickMelhor(); }
   });
   // "+ linha": adiciona mais uma linha (fornecedor/valor, ou documento,
   // conforme o modo atual) além das 3 iniciais.
@@ -1542,6 +1557,7 @@ function openDrawer(id){
     fCot.insertAdjacentHTML('beforeend',cotRowHTML(i));
     fCot.querySelector(`.cotForn[data-i="${i}"]`).focus();
     refreshMelhorOptions();
+    autoPickMelhor();
   };
   // Reconstrói as opções do select "Melhor orçamento" a partir do que
   // está digitado agora nas linhas de fornecedor (mantém a seleção atual
@@ -1559,6 +1575,25 @@ function openDrawer(id){
     sel.innerHTML='<option value="">— nenhum selecionado —</option>'+
       opts.map(o=>`<option value="${o.i}">${esc(o.nome)}</option>`).join('');
     if([...sel.options].some(o=>o.value===curVal)) sel.value=curVal;
+  }
+  // Puxa sozinho o fornecedor de menor valor como "melhor orçamento",
+  // sempre que a pessoa ainda não tiver escolhido manualmente (ver
+  // melhorManual acima e o listener de "change" no #fMelhor mais abaixo,
+  // que marca a escolha como manual assim que a pessoa mexe no select).
+  function autoPickMelhor(){
+    if(melhorManual||cotModo==='documento') return;
+    const forns=[...fCot.querySelectorAll('.cotForn')];
+    const valores=[...fCot.querySelectorAll('.cotValor')];
+    let bestI=null,bestV=Infinity;
+    forns.forEach((el,i)=>{
+      if(!el.value.trim()) return;
+      const v=parseMoneyValue(valores[i]&&valores[i].value);
+      if(v===null||v<=0||v>=bestV) return;
+      bestV=v;bestI=i;
+    });
+    if(bestI===null) return;
+    const sel=d.querySelector('#fMelhor');
+    if([...sel.options].some(o=>o.value===String(bestI))) sel.value=String(bestI);
   }
   // Alterna o modo do bloco inteiro: reconstrói cabeçalho e linhas de uma
   // vez, preservando o texto já digitado em "Fornecedor"/"Documento" (é o
@@ -1581,6 +1616,7 @@ function openDrawer(id){
     fCot.className='cotGrid'+(cotModo==='documento'?' docMode':'');
     fCot.innerHTML=Array.from({length:cotCount},(_,i)=>cotRowHTML(i,forns[i])).join('');
     refreshMelhorOptions();
+    autoPickMelhor();
   });
 
   // anexos: clipe -> abre o seletor de arquivo escondido; ao escolher,
@@ -1650,6 +1686,7 @@ function openDrawer(id){
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
+    melhorManual=false;
     d.querySelector('#fMelhor').value='';
     refreshMelhorOptions();
     d.querySelector('#fNota').value='';
@@ -1755,6 +1792,13 @@ function openDrawer(id){
     e.preventDefault();
     saveBtn.focus();
   });
+  // qualquer interação de verdade da pessoa com o select vira uma escolha
+  // manual, que passa a ser respeitada (não é mais sobrescrita sozinha) —
+  // setar .value por código, como o autoPickMelhor faz, não dispara isso
+  d.querySelector('#fMelhor').addEventListener('change',()=>{ melhorManual=true; });
+  // já entra com o de menor valor selecionado, se ainda não houver
+  // escolha manual salva e os valores já estiverem preenchidos
+  autoPickMelhor();
   d.querySelector('#fNome').focus();
   document.addEventListener('keydown',escClose);
 }
