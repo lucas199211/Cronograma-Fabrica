@@ -162,7 +162,7 @@ h1{
 }
 .actGrip:hover{color:var(--ink)}
 .actGrip:active{cursor:grabbing}
-.phaseRail.dropTarget,.actRail.dropTarget,.addRail.dropTarget{background:#163D3422}
+.phaseRail.dropTarget{background:#163D3422}
 .actLane{height:34px;box-sizing:border-box;border-bottom:1px solid var(--line-2)}
 .name{
   border:0;background:transparent;text-align:left;padding:0;font-size:12.5px;color:var(--ink);
@@ -1066,28 +1066,51 @@ function buildTimeline(){
     e.textContent=onlyLate?'Nada atrasado. Bom sinal.':'Sem atividades. Use "+ atividade" em qualquer fase.';
     track.appendChild(e);
   }
-  // Arrastar a alça (▤) de uma atividade e soltar em cima de qualquer linha
-  // de outro grupo (cabeçalho, atividade ou "+ atividade") move ela pra
-  // esse grupo. Delegado no railcol inteiro (em vez de um listener por
-  // linha) usando o data-pi que cada linha carrega — bem mais simples do
-  // que religar drag/drop em cada elemento a cada render.
-  let dropRow=null;
-  const clearDrop=()=>{ if(dropRow){ dropRow.classList.remove('dropTarget'); dropRow=null; } };
+  // Arrastar a alça (▤) de uma atividade e soltar em qualquer ponto da
+  // coluna esquerda move ela pro grupo mais próximo verticalmente do ponto
+  // onde soltou — não precisa acertar em cima de uma linha específica.
+  // preventDefault roda sempre (não só em cima de uma linha) pra coluna
+  // inteira aceitar o solt, e o grupo é resolvido por proximidade, não por
+  // hover exato: soltar num espaço vazio entre linhas, ou levemente fora
+  // de uma linha, ainda funciona.
+  function resolveDropPhase(clientY){
+    const rows=[...railcol.querySelectorAll('[data-pi]')];
+    if(!rows.length) return null;
+    let best=null,bestDist=Infinity;
+    rows.forEach(r=>{
+      const rect=r.getBoundingClientRect();
+      const dist=Math.abs((rect.top+rect.bottom)/2-clientY);
+      if(dist<bestDist){ bestDist=dist; best=r; }
+    });
+    return best?Number(best.dataset.pi):null;
+  }
+  let dropPi=null;
+  function setDropHighlight(pi){
+    if(dropPi===pi) return;
+    if(dropPi!==null){
+      const old=railcol.querySelector(`.phaseRail[data-pi="${dropPi}"]`);
+      if(old) old.classList.remove('dropTarget');
+    }
+    dropPi=pi;
+    if(pi!==null){
+      const cur=railcol.querySelector(`.phaseRail[data-pi="${pi}"]`);
+      if(cur) cur.classList.add('dropTarget');
+    }
+  }
   railcol.addEventListener('dragover',e=>{
-    const row=e.target.closest('[data-pi]');
-    if(!row)return;
     e.preventDefault();
-    if(dropRow!==row){ clearDrop(); row.classList.add('dropTarget'); dropRow=row; }
+    e.dataTransfer.dropEffect='move';
+    setDropHighlight(resolveDropPhase(e.clientY));
   });
   railcol.addEventListener('dragleave',e=>{
-    if(!railcol.contains(e.relatedTarget)) clearDrop();
+    if(!railcol.contains(e.relatedTarget)) setDropHighlight(null);
   });
   railcol.addEventListener('drop',e=>{
-    const row=e.target.closest('[data-pi]');
-    clearDrop();
-    if(!row)return;
     e.preventDefault();
-    moveActToPhase(e.dataTransfer.getData('text/plain'),Number(row.dataset.pi));
+    const pi=resolveDropPhase(e.clientY);
+    setDropHighlight(null);
+    if(pi===null) return;
+    moveActToPhase(e.dataTransfer.getData('text/plain'),pi);
   });
   attachDrag(wrap,t0);
   return outer;
