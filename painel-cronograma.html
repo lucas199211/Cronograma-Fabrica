@@ -1089,10 +1089,13 @@ function buildTimeline(){
         bar.style.left=x+'px';bar.style.width=w+'px';
         bar.dataset.id=a.id;
         if(st!=='atrasado'){
-          bar.style.borderColor='var(--ink-2)';
-          bar.style.background='#626A6822';
+          // 100% concluída usa o verde Pluma (--ink, a mesma cor da logo);
+          // o resto continua no cinza neutro de sempre
+          const barColor=st==='feito'?'var(--ink)':'var(--ink-2)';
+          bar.style.borderColor=barColor;
+          bar.style.background=st==='feito'?'#163D3422':'#626A6822';
           const f=document.createElement('div');
-          f.className='fill';f.style.background='var(--ink-2)';f.style.width=(a.pct||0)+'%';
+          f.className='fill';f.style.background=barColor;f.style.width=(a.pct||0)+'%';
           f.style.opacity=st==='feito'?'1':'.85';
           bar.appendChild(f);
         }
