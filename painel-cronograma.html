@@ -344,6 +344,35 @@ h1{
   .drawer{width:100%}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- resumo PDF (impressão) ---------- */
+.pdfOnly{display:none}
+@media print{
+  body>*:not(.pdfOnly){display:none!important}
+  .pdfOnly{display:block!important}
+  @page{margin:14mm}
+}
+.pdfPage{font-family:var(--sans);color:#111;max-width:760px;margin:0 auto}
+.pdfPage h1{
+  font-family:var(--display);font-size:19px;font-weight:400;letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 3px;color:var(--ink);
+}
+.pdfPage .sub{font-family:var(--mono);font-size:10.5px;color:#555;margin-bottom:16px}
+.pdfStats{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:20px;border-bottom:1px solid #ddd;padding-bottom:14px}
+.pdfStats .k{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#666}
+.pdfStats .v{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink)}
+.pdfSection{margin-bottom:18px;break-inside:avoid}
+.pdfSection h2{
+  font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink);
+  border-bottom:1px solid #ccc;padding-bottom:4px;margin:0 0 7px;
+}
+.pdfTable{width:100%;border-collapse:collapse;font-size:11px}
+.pdfTable th{
+  font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#666;text-align:left;padding:3px 6px;border-bottom:1px solid #bbb;
+}
+.pdfTable td{padding:4px 6px;border-bottom:1px solid #eee}
+.pdfTable tr{break-inside:avoid}
 </style>
 </head>
 <body>
@@ -368,6 +397,7 @@ h1{
     <button class="ghost" id="onlyLate" aria-pressed="false">Só atrasadas</button>
     <button class="ghost" id="saveNow">Salvar</button>
     <button class="ghost" id="exp">Exportar CSV</button>
+    <button class="ghost" id="pdfBtn">Resumo PDF</button>
     <button class="ghost" id="signOut">Sair</button>
   </div>
   <div class="stats" id="stats"></div>
@@ -376,6 +406,8 @@ h1{
 <main id="main"></main>
 
 </div>
+
+<div id="pdfArea" class="pdfOnly"></div>
 
 <script>
 /* ============================ dados ============================ */
@@ -777,12 +809,18 @@ function updateFlowstrip(){
   el.style.background=`linear-gradient(180deg, ${stops})`;
 }
 
+// progresso ponderado pelo tamanho (em dias) de cada atividade — usado no
+// indicador "Avanço geral" do topo e no resumo em PDF, pra sempre baterem
+function overallPct(acts){
+  const sched=acts.filter(a=>a.ini&&a.fim);
+  const w=sched.reduce((s,a)=>s+Math.max(1,diffD(s2d(a.ini),s2d(a.fim))+1),0);
+  const wp=sched.reduce((s,a)=>s+Math.max(1,diffD(s2d(a.ini),s2d(a.fim))+1)*((a.pct||0)/100),0);
+  return w?Math.round(wp/w*100):0;
+}
 function renderStats(){
   const A=state.acts;
   const sched=A.filter(a=>a.ini&&a.fim);
-  const w=sched.reduce((s,a)=>s+Math.max(1,diffD(s2d(a.ini),s2d(a.fim))+1),0);
-  const wp=sched.reduce((s,a)=>s+Math.max(1,diffD(s2d(a.ini),s2d(a.fim))+1)*((a.pct||0)/100),0);
-  const pct=w?Math.round(wp/w*100):0;
+  const pct=overallPct(A);
   const late=A.filter(a=>statusOf(a)==='atrasado');
   const run=A.filter(a=>statusOf(a)==='andamento').length;
   const nod=A.filter(a=>statusOf(a)==='semdata').length;
@@ -1645,6 +1683,79 @@ function exportCSV(){
   URL.revokeObjectURL(url);
 }
 
+/* ---------- resumo PDF ---------- */
+// Monta uma página condensada (avanço geral, avanço por grupo, atrasadas
+// e em andamento) em vez de listar as ~100 atividades uma a uma — o
+// objetivo é caber a leitura em 1-2 páginas. Limita cada lista a um
+// tamanho razoável (com uma linha "+N não listadas") pra não estourar
+// isso caso um dia existam muitas atrasadas/em andamento ao mesmo tempo.
+// Usa o diálogo de impressão do navegador (sem biblioteca de PDF): a
+// pessoa escolhe "Salvar como PDF" no destino.
+const PDF_LIST_MAX=20;
+function buildPDFSummary(){
+  const A=state.acts;
+  const late=A.filter(a=>statusOf(a)==='atrasado').sort((x,y)=>lateDays(y)-lateDays(x));
+  const running=A.filter(a=>statusOf(a)==='andamento').sort((x,y)=>{
+    if(!x.fim) return 1;
+    if(!y.fim) return -1;
+    return s2d(x.fim)-s2d(y.fim);
+  });
+  const nod=A.filter(a=>statusOf(a)==='semdata').length;
+  const grupos=PHASES.map((ph,pi)=>{
+    const list=A.filter(a=>a.fase===pi);
+    const done=list.filter(a=>(a.pct||0)>=100).length;
+    const pct=list.length?Math.round(list.reduce((s,a)=>s+(a.pct||0),0)/list.length):0;
+    return{nome:ph.n,done,total:list.length,pct};
+  }).filter(g=>g.total>0);
+  const rowsGrupos=grupos.map(g=>
+    `<tr><td>${esc(g.nome)}</td><td>${g.done}/${g.total}</td><td>${g.pct}%</td></tr>`).join('');
+  const listRows=(list,fields)=>{
+    const shown=list.slice(0,PDF_LIST_MAX).map(fields).join('');
+    const extra=list.length>PDF_LIST_MAX
+      ?`<tr><td colspan="4">+ ${list.length-PDF_LIST_MAX} não listadas</td></tr>`:'';
+    return shown+extra;
+  };
+  const rowsLate=listRows(late,a=>
+    `<tr><td>${esc(a.nome)}</td><td>${esc(a.resp||'—')}</td><td>${lateDays(a)}d</td><td>${fmt(a.fim)}</td></tr>`);
+  const rowsRunning=listRows(running,a=>
+    `<tr><td>${esc(a.nome)}</td><td>${esc(a.resp||'—')}</td><td>${a.pct||0}%</td><td>${a.fim?fmt(a.fim):'sem prazo'}</td></tr>`);
+  return `<div class="pdfPage">
+    <h1>Cronograma da planta — resumo gerencial</h1>
+    <div class="sub">Gerado em ${fmt(d2s(today()))} · ${A.length} atividades no total</div>
+    <div class="pdfStats">
+      <div><div class="k">Avanço geral</div><div class="v">${overallPct(A)}%</div></div>
+      <div><div class="k">Atrasadas</div><div class="v">${late.length}</div></div>
+      <div><div class="k">Em andamento</div><div class="v">${running.length}</div></div>
+      <div><div class="k">Sem data</div><div class="v">${nod}</div></div>
+    </div>
+    <div class="pdfSection">
+      <h2>Avanço por grupo</h2>
+      <table class="pdfTable">
+        <thead><tr><th>Grupo</th><th>Concluídas</th><th>Avanço</th></tr></thead>
+        <tbody>${rowsGrupos}</tbody>
+      </table>
+    </div>
+    ${late.length?`<div class="pdfSection">
+      <h2>Atrasadas (${late.length})</h2>
+      <table class="pdfTable">
+        <thead><tr><th>Atividade</th><th>Responsável</th><th>Atraso</th><th>Prazo</th></tr></thead>
+        <tbody>${rowsLate}</tbody>
+      </table>
+    </div>`:''}
+    ${running.length?`<div class="pdfSection">
+      <h2>Em andamento (${running.length})</h2>
+      <table class="pdfTable">
+        <thead><tr><th>Atividade</th><th>Responsável</th><th>Andamento</th><th>Prazo</th></tr></thead>
+        <tbody>${rowsRunning}</tbody>
+      </table>
+    </div>`:''}
+  </div>`;
+}
+function printPDFSummary(){
+  document.getElementById('pdfArea').innerHTML=buildPDFSummary();
+  window.print();
+}
+
 /* ---------- utilidades ---------- */
 function uid(){return Math.random().toString(36).slice(2,10)}
 // nome de arquivo com espaço/acento derruba o Storage do Supabase com
@@ -1682,6 +1793,7 @@ document.getElementById('saveNow').onclick=async e=>{
   if(ok) toast('Salvo.');
 };
 document.getElementById('exp').onclick=exportCSV;
+document.getElementById('pdfBtn').onclick=printPDFSummary;
 document.getElementById('signOut').onclick=async()=>{
   await db.auth.signOut();
   location.reload();
