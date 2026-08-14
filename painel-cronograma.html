@@ -1837,7 +1837,20 @@ function buildPDFSummary(comentario){
 async function printPDFSummary(){
   const comentario=await showGestorGate();
   if(comentario===null) return;
-  document.getElementById('pdfArea').innerHTML=buildPDFSummary(comentario);
+  const area=document.getElementById('pdfArea');
+  area.innerHTML=buildPDFSummary(comentario);
+  // window.print() logo em seguida podia disparar a impressão antes do
+  // navegador terminar de decodificar/desenhar as logos recém-inseridas
+  // (mesmo sendo data URI, não é instantâneo) — as logos simplesmente não
+  // apareciam na saída. Espera cada <img> terminar de decodificar antes
+  // de imprimir.
+  const imgs=[...area.querySelectorAll('img')];
+  await Promise.all(imgs.map(img=>
+    img.decode?img.decode().catch(()=>{}):new Promise(res=>{
+      if(img.complete) return res();
+      img.onload=img.onerror=res;
+    })
+  ));
   window.print();
 }
 
