@@ -537,15 +537,26 @@ let saveT=null;
 // por atividade (usando o carimbo _ts de cada uma) em vez de sobrescrever
 // tudo de uma vez — era essa a causa dos relatos de "lancei a informação e
 // ela não ficou salva".
+// A ordem de um Map segue a ordem de inserção das CHAVES; dar set() numa
+// chave que já existe só troca o valor, não move a posição. Por isso a
+// base tem que ser sempre a ordem local: ela é quem carrega qualquer
+// reordenação (arrastar atividade dentro/entre grupos) que a pessoa
+// acabou de fazer. Se a base fosse a ordem remota (como era antes), toda
+// reordenação local seria silenciosamente desfeita no próximo salvamento
+// — era exatamente a causa de "arrasto a atividade e ela volta pro
+// lugar de onde saiu".
 function mergeActs(localActs,remoteActs,deletedIds){
   const byId=new Map();
-  (remoteActs||[]).forEach(a=>byId.set(a.id,a));
   (localActs||[]).forEach(a=>{
     if(deletedIds&&deletedIds.has(a.id)) return;
-    const r=byId.get(a.id);
-    if(!r||(a._ts||0)>=(r._ts||0)) byId.set(a.id,a);
+    byId.set(a.id,a);
   });
-  if(deletedIds) deletedIds.forEach(id=>byId.delete(id));
+  (remoteActs||[]).forEach(r=>{
+    if(deletedIds&&deletedIds.has(r.id)) return;
+    const l=byId.get(r.id);
+    if(!l) byId.set(r.id,r); // atividade nova, de outra pessoa: inclui no fim
+    else if((r._ts||0)>(l._ts||0)) byId.set(r.id,r); // conteúdo remoto mais novo: atualiza valor, mantém a posição local
+  });
   return [...byId.values()];
 }
 // registro de exclusão é imutável (cada atividade só é excluída uma vez) —
