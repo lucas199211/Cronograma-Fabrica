@@ -2083,11 +2083,11 @@ function buildPDFSummary(comentario){
       <h2>Comentário do gestor</h2>
       <p>${esc(comentario)}</p>
     </div>`:''}
-    ${investimentoValue()?`<div class="pdfInvestNote">Investimentos — Projeto Proteína: <b>${esc(investimentoValue())}</b></div>`:''}
     <div class="pdfSection">
       <h2>Avanço por grupo</h2>
       <div class="pdfBarsBox">${barsGrupos}</div>
     </div>
+    ${investimentoValue()?`<div class="pdfInvestNote">Investimentos — Projeto Proteína: <b>${esc(investimentoValue())}</b></div>`:''}
     ${late.length?`<div class="pdfSection tableSection">
       <h2>Atrasadas (${late.length})</h2>
       <table class="pdfTable">
