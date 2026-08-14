@@ -601,16 +601,26 @@ function fmtMoneyNum(n){
   const dec=Math.abs(cents)%100;
   return (cents<0?'-':'')+'R$ '+grouped+(dec?','+String(dec).padStart(2,'0'):'');
 }
+// quantidade de equipamentos de uma atividade: campo livre (texto), então
+// só entra na conta se for um número válido e positivo — sem isso (campo
+// vazio ou não numérico) assume 1, pra não alterar o valor unitário de
+// atividades que nunca usaram esse campo.
+function parseQtd(v){
+  const n=parseFloat(String(v||'').trim().replace(',','.'));
+  return(!isNaN(n)&&n>0)?n:1;
+}
 // soma o valor do "melhor orçamento" (o fornecedor escolhido, manual ou
-// automático) de cada atividade da lista — usado no cabeçalho de cada
-// grupo, pra dar uma visão rápida de quanto o grupo já está custando.
+// automático) multiplicado pela quantidade, de cada atividade da lista —
+// usado no cabeçalho de cada grupo, pra dar uma visão rápida de quanto o
+// grupo já está custando. O valor digitado na linha de orçamento continua
+// sendo o valor unitário; só a soma do grupo é que multiplica.
 function melhorTotalDoGrupo(list){
   return list.reduce((s,a)=>{
     const nome=(a.melhorOrcamento||'').trim();
     if(!nome) return s;
     const cot=(a.cotacoes||[]).find(c=>c&&(c.forn||'').trim()===nome);
     const v=cot?parseMoneyValue(cot.valor):null;
-    return s+(v>0?v:0);
+    return s+(v>0?v*parseQtd(a.quantidade):0);
   },0);
 }
 
@@ -1511,6 +1521,10 @@ function openDrawer(id){
         <button type="button" data-m="orcamento" aria-pressed="${cotModo==='orcamento'}">Orçamentos</button>
         <button type="button" data-m="documento" aria-pressed="${cotModo==='documento'}">Documentos</button>
       </div>
+      <div class="f" id="fQtdWrap" style="margin-top:10px;${cotModo==='documento'?'display:none':''}">
+        <label for="fQtd">Quantidade</label>
+        <input id="fQtd" inputmode="numeric" placeholder="1" value="${esc(a.quantidade||'')}">
+      </div>
       <div class="cotHead${cotModo==='documento'?' docMode':''}" id="fCotHead">${cotHeadHTML()}</div>
       <div class="cotGrid${cotModo==='documento'?' docMode':''}" id="fCot">${Array.from({length:cotCount},(_,i)=>{
         const c=(a.cotacoes&&a.cotacoes[i])||{};
@@ -1612,6 +1626,8 @@ function openDrawer(id){
   // se a opção ainda existir); esconde o campo inteiro em modo documento,
   // já que não faz sentido escolher "melhor orçamento" entre documentos.
   function refreshMelhorOptions(){
+    const qtdWrap=d.querySelector('#fQtdWrap');
+    if(qtdWrap) qtdWrap.style.display=cotModo==='documento'?'none':'';
     const wrap=d.querySelector('#fMelhorWrap');
     if(!wrap) return;
     if(cotModo==='documento'){ wrap.style.display='none'; return; }
@@ -1727,13 +1743,14 @@ function openDrawer(id){
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===pct));
   };
   // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
-  // andamento, orçamentos, melhor orçamento, observação) — mantém nome e
-  // fase, que identificam a atividade
+  // andamento, orçamentos, quantidade, melhor orçamento, observação) —
+  // mantém nome e fase, que identificam a atividade
   d.querySelector('#fClear').onclick=()=>{
     d.querySelector('#fResp').value='';
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
+    d.querySelector('#fQtd').value='';
     melhorManual=false;
     d.querySelector('#fMelhor').value='';
     refreshMelhorOptions();
@@ -1764,6 +1781,7 @@ function openDrawer(id){
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
     cur.cotModo=cotModo;
+    cur.quantidade=d.querySelector('#fQtd').value.trim();
     cur.cotacoes=Array.from({length:cotCount},(_,i)=>({
       forn:fCot.querySelector(`.cotForn[data-i="${i}"]`).value.trim(),
       valor:cotModo==='documento'?'':fCot.querySelector(`.cotValor[data-i="${i}"]`).value.trim(),
