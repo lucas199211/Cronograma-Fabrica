@@ -278,6 +278,8 @@ h1{
 }
 .drawer h3{margin:0 0 2px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
 .gate{right:auto;left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);width:280px;border:1px solid var(--line)}
+.gate.wide{width:460px;max-width:90vw}
+.gate.wide textarea{min-height:180px}
 .gateErr{color:#8C2E2A;font-size:11px;margin-top:10px;min-height:14px}
 .drawer .title{font-size:16px;line-height:1.25;margin:0 0 16px}
 .f{margin-bottom:13px}
@@ -1736,7 +1738,7 @@ function exportCSV(){
 function showGestorGate(){
   return new Promise(resolve=>{
     const scrim=document.createElement('div');scrim.className='scrim';
-    const box=document.createElement('div');box.className='drawer gate';
+    const box=document.createElement('div');box.className='drawer gate wide';
     box.innerHTML=`
       <h3>Resumo PDF</h3>
       <p class="title">Comentário do gestor</p>
