@@ -350,6 +350,10 @@ h1{
 @media print{
   body>*:not(.pdfOnly){display:none!important}
   .pdfOnly{display:block!important}
+  /* sem isso, a maioria dos navegadores some com cor de fundo (donut,
+     barras, legenda) na impressão a menos que a pessoa marque "cores de
+     fundo" manualmente no diálogo — força isso a acontecer sempre */
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @page{margin:14mm}
 }
 .pdfPage{font-family:var(--sans);color:#111;max-width:760px;margin:0 auto}
@@ -357,15 +361,31 @@ h1{
   font-family:var(--display);font-size:19px;font-weight:400;letter-spacing:.06em;
   text-transform:uppercase;margin:0 0 3px;color:var(--ink);
 }
-.pdfPage .sub{font-family:var(--mono);font-size:10.5px;color:#555;margin-bottom:16px}
-.pdfStats{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:20px;border-bottom:1px solid #ddd;padding-bottom:14px}
-.pdfStats .k{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#666}
-.pdfStats .v{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink)}
+.pdfPage .sub{font-family:var(--mono);font-size:10.5px;color:#555;margin-bottom:20px}
+.pdfDonutWrap{display:flex;align-items:center;gap:30px;margin-bottom:22px;flex-wrap:wrap}
+.pdfDonut{
+  width:150px;height:150px;border-radius:50%;flex:0 0 150px;
+  display:flex;align-items:center;justify-content:center;
+}
+.pdfDonut .hole{
+  width:98px;height:98px;border-radius:50%;background:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+}
+.pdfDonut .hole .v{font-family:var(--mono);font-size:27px;font-weight:700;color:var(--ink)}
+.pdfDonut .hole .k{font-family:var(--mono);font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#888}
+.pdfLegend{display:flex;flex-direction:column;gap:8px;font-size:12.5px}
+.pdfLegend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
 .pdfSection{margin-bottom:18px;break-inside:avoid}
 .pdfSection h2{
   font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink);
-  border-bottom:1px solid #ccc;padding-bottom:4px;margin:0 0 7px;
+  border-bottom:1px solid #ccc;padding-bottom:4px;margin:0 0 9px;
 }
+.pdfComment p{font-size:12.5px;line-height:1.65;color:#222;white-space:pre-wrap;margin:0;font-style:italic}
+.pdfBarRow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.pdfBarLabel{width:190px;flex:0 0 190px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdfBarTrack{flex:1;height:10px;background:#eee;border-radius:2px;overflow:hidden}
+.pdfBarFill{display:block;height:100%;background:var(--ink)}
+.pdfBarPct{width:70px;flex:0 0 70px;text-align:right;font-family:var(--mono);font-size:10.5px;color:#555}
 .pdfTable{width:100%;border-collapse:collapse;font-size:11px}
 .pdfTable th{
   font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
@@ -611,7 +631,15 @@ async function saveNow(dataToSave,opts){
     const localPhasesTs=payload.phasesTs||0, remotePhasesTs=remote.phasesTs||0;
     const phases=(remotePhasesTs>localPhasesTs&&remote.phases)?remote.phases:payload.phases;
     const deletados=mergeDeletados(payload.deletados,remote.deletados);
-    toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs),deletados};
+    // comentário do gestor: mesma ideia do phasesTs — o texto mais
+    // recente (local ou remoto) vence, em vez de sempre sobrescrever com
+    // o que esta aba tinha, que apagaria silenciosamente um ajuste feito
+    // por outra pessoa entre uma geração de PDF e outra
+    const localComentTs=payload.comentarioGestorTs||0, remoteComentTs=remote.comentarioGestorTs||0;
+    const comentarioGestor=(remoteComentTs>localComentTs&&remote.comentarioGestor!==undefined)
+      ?remote.comentarioGestor:payload.comentarioGestor;
+    toSave={...payload,acts,phases,phasesTs:Math.max(localPhasesTs,remotePhasesTs),deletados,
+      comentarioGestor,comentarioGestorTs:Math.max(localComentTs,remoteComentTs)};
   }
   const doUpsert=()=>db.from('cronograma_state')
     .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
@@ -1684,31 +1712,76 @@ function exportCSV(){
 }
 
 /* ---------- resumo PDF ---------- */
-// Monta uma página condensada (avanço geral, avanço por grupo, atrasadas
-// e em andamento) em vez de listar as ~100 atividades uma a uma — o
-// objetivo é caber a leitura em 1-2 páginas. Limita cada lista a um
-// tamanho razoável (com uma linha "+N não listadas") pra não estourar
-// isso caso um dia existam muitas atrasadas/em andamento ao mesmo tempo.
-// Usa o diálogo de impressão do navegador (sem biblioteca de PDF): a
-// pessoa escolhe "Salvar como PDF" no destino.
+// Pede/edita o comentário do gestor antes de gerar (fica salvo em
+// state.comentarioGestor, sincronizado como o resto dos dados — não
+// precisa reescrever a cada relatório, só ajustar quando quiser). Resolve
+// com o texto, ou null se cancelado.
+function showGestorGate(){
+  return new Promise(resolve=>{
+    const scrim=document.createElement('div');scrim.className='scrim';
+    const box=document.createElement('div');box.className='drawer gate';
+    box.innerHTML=`
+      <h3>Resumo PDF</h3>
+      <p class="title">Comentário do gestor</p>
+      <div class="f"><textarea id="gestorTxt" placeholder="Observações gerais sobre o andamento do projeto, pra aparecer no relatório">${esc(state.comentarioGestor||'')}</textarea></div>
+      <div class="acts"><button class="solid" id="gestorGo" type="button">Gerar PDF</button><button class="ghost" id="gestorCancel" type="button">Cancelar</button></div>`;
+    document.body.appendChild(scrim);document.body.appendChild(box);
+    const txt=box.querySelector('#gestorTxt'),go=box.querySelector('#gestorGo'),cancel=box.querySelector('#gestorCancel');
+    txt.focus();txt.setSelectionRange(txt.value.length,txt.value.length);
+    function cleanup(){ scrim.remove(); box.remove(); }
+    cancel.onclick=()=>{ cleanup(); resolve(null); };
+    scrim.onclick=()=>{ cleanup(); resolve(null); };
+    go.onclick=async()=>{
+      go.disabled=true;go.textContent='Gerando...';
+      const val=txt.value;
+      if(val!==(state.comentarioGestor||'')){
+        state.comentarioGestor=val;
+        state.comentarioGestorTs=Date.now();
+        await saveNow(state);
+      }
+      cleanup();
+      resolve(val);
+    };
+  });
+}
+// Monta uma página condensada (donut de status, comentário do gestor,
+// avanço por grupo em barras, atrasadas e em andamento) em vez de listar
+// as ~100 atividades uma a uma — o objetivo é caber a leitura em 1-2
+// páginas. Limita cada lista a um tamanho razoável (com uma linha "+N não
+// listadas") pra não estourar isso caso um dia existam muitas
+// atrasadas/em andamento ao mesmo tempo. Usa o diálogo de impressão do
+// navegador (sem biblioteca de PDF): a pessoa escolhe "Salvar como PDF"
+// no destino. O donut é CSS puro (conic-gradient), sem lib de gráfico.
 const PDF_LIST_MAX=20;
-function buildPDFSummary(){
+function buildPDFSummary(comentario){
   const A=state.acts;
+  const total=A.length||1;
+  const feito=A.filter(a=>statusOf(a)==='feito');
   const late=A.filter(a=>statusOf(a)==='atrasado').sort((x,y)=>lateDays(y)-lateDays(x));
   const running=A.filter(a=>statusOf(a)==='andamento').sort((x,y)=>{
     if(!x.fim) return 1;
     if(!y.fim) return -1;
     return s2d(x.fim)-s2d(y.fim);
   });
-  const nod=A.filter(a=>statusOf(a)==='semdata').length;
+  const outras=A.length-feito.length-late.length-running.length;
+  const pFeito=Math.round(feito.length/total*100);
+  const pAnd=Math.round(running.length/total*100);
+  const pAtr=Math.round(late.length/total*100);
+  const pOut=Math.max(0,100-pFeito-pAnd-pAtr);
+  const c1=pFeito,c2=c1+pAnd,c3=c2+pAtr;
+  const donutBg=`conic-gradient(#163D34 0% ${c1}%,#BC933F ${c1}% ${c2}%,#8C2E2A ${c2}% ${c3}%,#D8D4CB ${c3}% 100%)`;
   const grupos=PHASES.map((ph,pi)=>{
     const list=A.filter(a=>a.fase===pi);
     const done=list.filter(a=>(a.pct||0)>=100).length;
     const pct=list.length?Math.round(list.reduce((s,a)=>s+(a.pct||0),0)/list.length):0;
     return{nome:ph.n,done,total:list.length,pct};
   }).filter(g=>g.total>0);
-  const rowsGrupos=grupos.map(g=>
-    `<tr><td>${esc(g.nome)}</td><td>${g.done}/${g.total}</td><td>${g.pct}%</td></tr>`).join('');
+  const barsGrupos=grupos.map(g=>`
+    <div class="pdfBarRow">
+      <span class="pdfBarLabel">${esc(g.nome)}</span>
+      <span class="pdfBarTrack"><span class="pdfBarFill" style="width:${g.pct}%"></span></span>
+      <span class="pdfBarPct">${g.done}/${g.total} · ${g.pct}%</span>
+    </div>`).join('');
   const listRows=(list,fields)=>{
     const shown=list.slice(0,PDF_LIST_MAX).map(fields).join('');
     const extra=list.length>PDF_LIST_MAX
@@ -1722,18 +1795,22 @@ function buildPDFSummary(){
   return `<div class="pdfPage">
     <h1>Cronograma da planta — resumo gerencial</h1>
     <div class="sub">Gerado em ${fmt(d2s(today()))} · ${A.length} atividades no total</div>
-    <div class="pdfStats">
-      <div><div class="k">Avanço geral</div><div class="v">${overallPct(A)}%</div></div>
-      <div><div class="k">Atrasadas</div><div class="v">${late.length}</div></div>
-      <div><div class="k">Em andamento</div><div class="v">${running.length}</div></div>
-      <div><div class="k">Sem data</div><div class="v">${nod}</div></div>
+    <div class="pdfDonutWrap">
+      <div class="pdfDonut" style="background:${donutBg}"><div class="hole"><div class="v">${overallPct(A)}%</div><div class="k">avanço geral</div></div></div>
+      <div class="pdfLegend">
+        <div><span class="sw" style="background:#163D34"></span>Concluídas — ${feito.length} (${pFeito}%)</div>
+        <div><span class="sw" style="background:#BC933F"></span>Em andamento — ${running.length} (${pAnd}%)</div>
+        <div><span class="sw" style="background:#8C2E2A"></span>Atrasadas — ${late.length} (${pAtr}%)</div>
+        <div><span class="sw" style="background:#D8D4CB"></span>Outras (sem data / não iniciadas) — ${outras} (${pOut}%)</div>
+      </div>
     </div>
+    ${comentario?`<div class="pdfSection pdfComment">
+      <h2>Comentário do gestor</h2>
+      <p>${esc(comentario)}</p>
+    </div>`:''}
     <div class="pdfSection">
       <h2>Avanço por grupo</h2>
-      <table class="pdfTable">
-        <thead><tr><th>Grupo</th><th>Concluídas</th><th>Avanço</th></tr></thead>
-        <tbody>${rowsGrupos}</tbody>
-      </table>
+      ${barsGrupos}
     </div>
     ${late.length?`<div class="pdfSection">
       <h2>Atrasadas (${late.length})</h2>
@@ -1751,8 +1828,10 @@ function buildPDFSummary(){
     </div>`:''}
   </div>`;
 }
-function printPDFSummary(){
-  document.getElementById('pdfArea').innerHTML=buildPDFSummary();
+async function printPDFSummary(){
+  const comentario=await showGestorGate();
+  if(comentario===null) return;
+  document.getElementById('pdfArea').innerHTML=buildPDFSummary(comentario);
   window.print();
 }
 
