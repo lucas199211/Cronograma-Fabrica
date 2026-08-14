@@ -133,6 +133,7 @@ h1{
 }
 .phaseNameInput:focus{outline:none}
 .phaseRail .cnt{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:auto}
+.phaseRail .cntMoney{color:var(--ink);font-weight:700;margin-left:auto}
 .collapseBtn{
   border:0;background:transparent;color:var(--ink-2);font-size:9px;line-height:1;
   width:14px;height:14px;flex:0 0 14px;display:flex;align-items:center;justify-content:center;
@@ -573,6 +574,27 @@ function parseMoneyValue(txt){
   const n=parseFloat(raw.replace(/\./g,'').replace(',','.'));
   return isNaN(n)?null:n;
 }
+// formata um número (não texto digitado) como "R$ 1.234,56" — usado pra
+// mostrar somatórias calculadas (ex: total dos melhores orçamentos de um
+// grupo). Só mostra centavos se o total realmente tiver centavos.
+function fmtMoneyNum(n){
+  const cents=Math.round((n||0)*100);
+  const grouped=Math.trunc(Math.abs(cents)/100).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  const dec=Math.abs(cents)%100;
+  return (cents<0?'-':'')+'R$ '+grouped+(dec?','+String(dec).padStart(2,'0'):'');
+}
+// soma o valor do "melhor orçamento" (o fornecedor escolhido, manual ou
+// automático) de cada atividade da lista — usado no cabeçalho de cada
+// grupo, pra dar uma visão rápida de quanto o grupo já está custando.
+function melhorTotalDoGrupo(list){
+  return list.reduce((s,a)=>{
+    const nome=(a.melhorOrcamento||'').trim();
+    if(!nome) return s;
+    const cot=(a.cotacoes||[]).find(c=>c&&(c.forn||'').trim()===nome);
+    const v=cot?parseMoneyValue(cot.valor):null;
+    return s+(v>0?v:0);
+  },0);
+}
 
 /* ============================ status ============================ */
 function statusOf(a){
@@ -1010,6 +1032,7 @@ function buildTimeline(){
 
     const collapsed=collapsedPhases.has(pi);
     const done=list.filter(a=>(a.pct||0)>=100).length;
+    const melhorTotal=melhorTotalDoGrupo(list);
     const pr=document.createElement('div');
     pr.className='phaseRail';pr.dataset.pi=pi;
     pr.innerHTML=`<button class="collapseBtn" aria-expanded="${!collapsed}" title="${collapsed?'Expandir grupo':'Recolher grupo'}">▾</button>
@@ -1019,6 +1042,7 @@ function buildTimeline(){
         </span>
         <span class="chip" style="background:${ph.c}"></span>
         <h2 title="Clique para renomear">${esc(ph.n)}</h2>
+        ${melhorTotal>0?`<span class="cnt cntMoney" title="Soma dos melhores orçamentos do grupo">${fmtMoneyNum(melhorTotal)}</span>`:''}
         <span class="cnt">${done}/${list.length}</span>`;
     pr.querySelector('.collapseBtn').onclick=()=>{
       if(collapsed) collapsedPhases.delete(pi); else collapsedPhases.add(pi);
