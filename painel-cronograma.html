@@ -434,11 +434,11 @@ h1{
    travada (acima) e a seção livre pra quebrar, a tabela flui e usa o
    espaço que sobrou antes de continuar na página seguinte. */
 .pdfSection.tableSection{break-inside:auto}
-.pdfFooterNote{
-  margin-top:22px;padding-top:12px;border-top:1px solid #ccc;
+.pdfInvestNote{
+  margin-bottom:18px;padding:10px 14px;border:1px solid rgba(0,0,0,.22);border-radius:10px;
   font-size:11.5px;color:#444;text-align:center;break-inside:avoid;
 }
-.pdfFooterNote b{color:var(--ink)}
+.pdfInvestNote b{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -2083,6 +2083,7 @@ function buildPDFSummary(comentario){
       <h2>Comentário do gestor</h2>
       <p>${esc(comentario)}</p>
     </div>`:''}
+    ${investimentoValue()?`<div class="pdfInvestNote">Investimentos — Projeto Proteína: <b>${esc(investimentoValue())}</b></div>`:''}
     <div class="pdfSection">
       <h2>Avanço por grupo</h2>
       <div class="pdfBarsBox">${barsGrupos}</div>
@@ -2101,7 +2102,6 @@ function buildPDFSummary(comentario){
         <tbody>${rowsRunning}</tbody>
       </table>
     </div>`:''}
-    ${investimentoValue()?`<div class="pdfFooterNote">Investimentos — Projeto Proteína: <b>${esc(investimentoValue())}</b></div>`:''}
   </div>`;
 }
 async function printPDFSummary(){
