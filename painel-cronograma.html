@@ -426,12 +426,14 @@ h1{
 }
 .pdfTable td{padding:4px 6px;border-bottom:1px solid #eee}
 .pdfTable tr{break-inside:avoid}
-/* tabelas de Atrasadas/Em andamento podem crescer bastante (até 20 linhas
-   cada) — se a seção inteira travar quebra de página (break-inside:avoid
-   padrão do .pdfSection), o navegador empurra a tabela toda pra próxima
-   página assim que ela não cabe mais no que sobrou da atual, deixando um
-   vão em branco enorme no fim da página anterior. Deixando só a LINHA
-   travada (acima) e a seção livre pra quebrar, a tabela flui e usa o
+.pdfBarRow{break-inside:avoid}
+/* seções que podem crescer bastante (tabelas de Atrasadas/Em andamento,
+   barras de Avanço por grupo com uma linha por grupo) — se a seção
+   inteira travar quebra de página (break-inside:avoid padrão do
+   .pdfSection), o navegador empurra ela toda pra próxima página assim
+   que não cabe mais no que sobrou da atual, deixando um vão em branco
+   enorme no fim da página anterior. Deixando só a LINHA travada (acima,
+   tr/.pdfBarRow) e a seção livre pra quebrar, o conteúdo flui e usa o
    espaço que sobrou antes de continuar na página seguinte. */
 .pdfSection.tableSection{break-inside:auto}
 .pdfInvestNote{
@@ -2083,7 +2085,7 @@ function buildPDFSummary(comentario){
       <h2>Comentário do gestor</h2>
       <p>${esc(comentario)}</p>
     </div>`:''}
-    <div class="pdfSection">
+    <div class="pdfSection tableSection">
       <h2>Avanço por grupo</h2>
       <div class="pdfBarsBox">${barsGrupos}</div>
     </div>
