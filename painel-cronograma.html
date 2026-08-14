@@ -419,12 +419,21 @@ h1{
 .pdfRoadDot{width:8px;height:8px;border-radius:50%;background:var(--ink);border:1.5px solid #fff;position:relative;z-index:1}
 .pdfBarPct{width:70px;flex:0 0 70px;text-align:right;font-family:var(--mono);font-size:10.5px;color:#555}
 .pdfTable{width:100%;border-collapse:collapse;font-size:11px}
+.pdfTable thead{display:table-header-group}
 .pdfTable th{
   font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
   color:#666;text-align:left;padding:3px 6px;border-bottom:1px solid #bbb;
 }
 .pdfTable td{padding:4px 6px;border-bottom:1px solid #eee}
 .pdfTable tr{break-inside:avoid}
+/* tabelas de Atrasadas/Em andamento podem crescer bastante (até 20 linhas
+   cada) — se a seção inteira travar quebra de página (break-inside:avoid
+   padrão do .pdfSection), o navegador empurra a tabela toda pra próxima
+   página assim que ela não cabe mais no que sobrou da atual, deixando um
+   vão em branco enorme no fim da página anterior. Deixando só a LINHA
+   travada (acima) e a seção livre pra quebrar, a tabela flui e usa o
+   espaço que sobrou antes de continuar na página seguinte. */
+.pdfSection.tableSection{break-inside:auto}
 </style>
 </head>
 <body>
@@ -2049,14 +2058,14 @@ function buildPDFSummary(comentario){
       <h2>Avanço por grupo</h2>
       <div class="pdfBarsBox">${barsGrupos}</div>
     </div>
-    ${late.length?`<div class="pdfSection">
+    ${late.length?`<div class="pdfSection tableSection">
       <h2>Atrasadas (${late.length})</h2>
       <table class="pdfTable">
         <thead><tr><th>Atividade</th><th>Responsável</th><th>Atraso</th><th>Prazo</th></tr></thead>
         <tbody>${rowsLate}</tbody>
       </table>
     </div>`:''}
-    ${running.length?`<div class="pdfSection">
+    ${running.length?`<div class="pdfSection tableSection">
       <h2>Em andamento (${running.length})</h2>
       <table class="pdfTable">
         <thead><tr><th>Atividade</th><th>Responsável</th><th>Andamento</th><th>Prazo</th></tr></thead>
