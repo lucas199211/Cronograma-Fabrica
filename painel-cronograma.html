@@ -437,7 +437,7 @@ h1{
    espaço que sobrou antes de continuar na página seguinte. */
 .pdfSection.tableSection{break-inside:auto}
 .pdfInvestNote{
-  margin-bottom:18px;padding:10px 14px;border:1px solid rgba(0,0,0,.22);border-radius:10px;
+  margin:70px 0 18px;padding:10px 14px;border:1px solid rgba(0,0,0,.22);border-radius:10px;
   font-size:11.5px;color:#444;text-align:center;break-inside:avoid;
 }
 .pdfInvestNote b{color:var(--ink)}
@@ -1985,11 +1985,12 @@ function showGestorGate(){
 // atrasadas/em andamento ao mesmo tempo. Usa o diálogo de impressão do
 // navegador (sem biblioteca de PDF): a pessoa escolhe "Salvar como PDF"
 // no destino. O donut é CSS puro (conic-gradient), sem lib de gráfico.
-// Baixado de 20 pra 15: com o resto do conteúdo da página (roteiro,
-// comentário do gestor, avanço por grupo), 20 linhas de "em andamento"
-// ainda estourava pra uma 3ª página com só 1 linha + aviso "+N não
-// listadas" nela, sobrando bastante espaço em branco.
-const PDF_LIST_MAX=15;
+// Baixado de 20 pra 15, e depois pra 10: agora que avanço por grupo,
+// atrasadas e em andamento sempre começam do zero na página 2 (ver
+// .pdfPageBreak), sobra menos espaço pra "em andamento" nessa mesma
+// página — com muitos grupos cadastrados, 15 linhas ainda estourava
+// pra uma 3ª página.
+const PDF_LIST_MAX=10;
 // Roteiro fixo do projeto (marcos de alto nível, não vem de state.acts —
 // é a mesma linha do tempo apresentada em slides pro grupo/diretoria).
 // Alterna acima/abaixo da linha, na ordem em que aparece aqui.
