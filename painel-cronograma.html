@@ -667,9 +667,16 @@ function hasNota(a){
 }
 
 /* ============================ armazenamento (supabase) ============================ */
+// Propaga erro de rede/sessão (throw) em vez de devolver null — quem chama
+// precisa distinguir "deu erro, tenta de novo" de "não tem nada salvo ainda,
+// é projeto novo". Antes os dois casos voltavam null igual, e um soluço de
+// conexão bem na abertura do painel acabava tratado como "projeto novo",
+// criando os dados de exemplo e sobrescrevendo o cronograma real (foi
+// exatamente essa a causa do incidente de 21/08 — ver o bloco de
+// inicialização no final do arquivo).
 async function load(){
   const {data,error}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
-  if(error){ toast('Não deu para carregar do servidor: '+error.message); return null; }
+  if(error) throw error;
   return data?data.data:null;
 }
 let saveT=null;
@@ -722,7 +729,21 @@ function mergeDeletados(local,remote){
 async function saveNow(dataToSave,opts){
   const payload=dataToSave||state;
   const deletedIds=opts&&opts.deletedIds;
-  const {data:remoteRow}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
+  let {data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
+  if(selErr&&isAuthError(selErr)){
+    await recoverAuth();
+    ({data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle());
+  }
+  if(selErr){
+    // Não deu pra confirmar o que já existe no servidor antes de gravar —
+    // seguir em frente aqui seria arriscar sobrescrever dado real com um
+    // retrato desatualizado (ou, pior, com o cronograma de exemplo, se isso
+    // acontecer bem na abertura do painel). Aborta em vez de gravar às
+    // cegas: foi exatamente a falta dessa trava que causou o incidente de
+    // 21/08, quando os 109 itens reais viraram os 54 de exemplo.
+    toast('Não deu para confirmar os dados do servidor: '+selErr.message+'. Tente salvar de novo.');
+    return false;
+  }
   const remote=remoteRow&&remoteRow.data;
   let toSave=payload;
   if(remote&&remote.acts){
@@ -2226,7 +2247,27 @@ function syncSeg(){
 /* ---------- início ---------- */
 (async()=>{
   await ensureAuth();
-  const saved=await load();
+  // Tenta carregar algumas vezes antes de desistir. Um erro de rede/sessão
+  // aqui NUNCA pode ser tratado como "não existe nada salvo, é projeto
+  // novo" — foi exatamente essa confusão (load() falhando e sendo lido como
+  // "vazio") que causou o incidente de 21/08: o painel montou os 54 itens
+  // de exemplo e sobrescreveu os 109 itens reais do cronograma. Por isso
+  // load() agora relança o erro (throw) em vez de devolver null, e aqui só
+  // seguimos pro ramo "projeto novo" quando a busca realmente teve sucesso
+  // e voltou vazia — nunca quando ela falhou.
+  let saved=null, loadErr=null;
+  for(let attempt=0;attempt<3;attempt++){
+    try{ saved=await load(); loadErr=null; break; }
+    catch(e){ loadErr=e; await new Promise(r=>setTimeout(r,1500)); }
+  }
+  if(loadErr){
+    document.body.innerHTML='<div style="padding:40px;font-family:sans-serif;max-width:520px;margin:40px auto;text-align:center">'+
+      '<h2>Não foi possível conectar ao servidor</h2>'+
+      '<p>Tentamos algumas vezes sem sucesso. Verifique sua internet e tente de novo. Nenhum dado foi alterado.</p>'+
+      '<p style="color:#888;font-size:12px">'+esc(loadErr.message||String(loadErr))+'</p>'+
+      '<button onclick="location.reload()">Tentar de novo</button></div>';
+    return;
+  }
   if(saved&&saved.acts&&saved.acts.length){
     state=saved;
   }else{
