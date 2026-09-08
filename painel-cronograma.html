@@ -727,13 +727,21 @@ function mergeDeletados(local,remote){
   (local||[]).forEach(x=>byId.set(x.id,x));
   return [...byId.values()];
 }
-async function saveNow(dataToSave,opts){
-  const payload=dataToSave||state;
-  const deletedIds=opts&&opts.deletedIds;
-  let {data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle();
+// Le, mescla e grava -- mas grava de forma CONDICIONAL (so se o
+// updated_at do servidor continuar exatamente igual ao que acabamos de
+// ler), em vez de um upsert incondicional. Sem isso, duas abas podiam ler
+// o mesmo estado quase juntas, e a que gravasse por ultimo apagava
+// silenciosamente o que a outra tinha acabado de salvar com sucesso --
+// nenhum erro pra ninguem (achado real de auditoria, 2026-09-08). Se a
+// gravacao condicional nao encontrar nenhuma linha pra atualizar (alguem
+// gravou no meio do caminho), NAO tenta de novo com o mesmo toSave -- ele
+// ja esta calculado em cima de dado velho. Devolve {conflict:true} pra
+// quem chamou buscar tudo de novo e remontar o merge do zero.
+async function saveAttempt(payload,deletedIds){
+  let {data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data,updated_at').eq('id',1).maybeSingle();
   if(selErr&&isAuthError(selErr)){
     await recoverAuth();
-    ({data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data').eq('id',1).maybeSingle());
+    ({data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data,updated_at').eq('id',1).maybeSingle());
   }
   if(selErr){
     // Não deu pra confirmar o que já existe no servidor antes de gravar —
@@ -742,16 +750,23 @@ async function saveNow(dataToSave,opts){
     // acontecer bem na abertura do painel). Aborta em vez de gravar às
     // cegas: foi exatamente a falta dessa trava que causou o incidente de
     // 21/08, quando os 109 itens reais viraram os 54 de exemplo.
-    toast('Não deu para confirmar os dados do servidor: '+selErr.message+'. Tente salvar de novo.');
-    return false;
+    return {ok:false,message:'Não deu para confirmar os dados do servidor: '+selErr.message+'. Tente salvar de novo.'};
   }
   const remote=remoteRow&&remoteRow.data;
   let toSave=payload;
   if(remote&&remote.acts){
-    const acts=mergeActs(payload.acts,remote.acts,deletedIds);
+    const deletados=mergeDeletados(payload.deletados,remote.deletados);
+    // uma atividade excluida nao pode ressuscitar so porque ESTE save em
+    // particular nao e o que esta executando a exclusao (ex: o timer de
+    // 60s, ou alguem salvando uma edicao em OUTRA atividade, sem ter
+    // recebido ainda o evento realtime dessa exclusao) -- por isso o
+    // filtro usa a lista de exclusao JA MESCLADA (o registro persistente
+    // em `deletados`), nao só o id que a chamada atual esta excluindo
+    const tombstoned=new Set(deletados.map(d=>d.id));
+    if(deletedIds) deletedIds.forEach(id=>tombstoned.add(id));
+    const acts=mergeActs(payload.acts,remote.acts,tombstoned);
     const localPhasesTs=payload.phasesTs||0, remotePhasesTs=remote.phasesTs||0;
     const phases=(remotePhasesTs>localPhasesTs&&remote.phases)?remote.phases:payload.phases;
-    const deletados=mergeDeletados(payload.deletados,remote.deletados);
     // comentário do gestor: mesma ideia do phasesTs — o texto mais
     // recente (local ou remoto) vence, em vez de sempre sobrescrever com
     // o que esta aba tinha, que apagaria silenciosamente um ajuste feito
@@ -773,15 +788,41 @@ async function saveNow(dataToSave,opts){
       roadmapDates,roadmapDatesTs:Math.max(localRoadTs,remoteRoadTs),
       investimentoProteina,investimentoProteinaTs:Math.max(localInvestTs,remoteInvestTs)};
   }
-  const doUpsert=()=>db.from('cronograma_state')
-    .upsert({id:1,data:toSave,updated_at:new Date().toISOString()});
-  let {error}=await doUpsert();
-  if(error&&isAuthError(error)){
-    await recoverAuth();
-    ({error}=await doUpsert());
+  const newTs=new Date().toISOString();
+  let writeErr,conflict=false;
+  if(remoteRow){
+    // ja existe linha: so grava se o updated_at continuar igual ao que
+    // acabamos de ler. 0 linhas afetadas = outra aba gravou nesse meio-
+    // tempo; o toSave calculado acima ja esta baseado em foto velha.
+    const {data:updRows,error}=await db.from('cronograma_state')
+      .update({data:toSave,updated_at:newTs}).eq('id',1).eq('updated_at',remoteRow.updated_at)
+      .select('id');
+    writeErr=error;
+    if(!error&&(!updRows||!updRows.length)) conflict=true;
+  }else{
+    // primeira gravação de sempre (a linha ainda não existe)
+    const {error}=await db.from('cronograma_state').insert({id:1,data:toSave,updated_at:newTs});
+    writeErr=error;
+    if(error&&error.code==='23505') conflict=true; // alguém inseriu primeiro
   }
-  if(error){ toast('Não deu para salvar no servidor: '+error.message); return false; }
-  return true;
+  if(writeErr&&isAuthError(writeErr)) return {ok:false,retryAuth:true};
+  if(writeErr&&!conflict) return {ok:false,message:'Não deu para salvar no servidor: '+writeErr.message};
+  if(conflict) return {ok:false,conflict:true};
+  return {ok:true};
+}
+async function saveNow(dataToSave,opts){
+  const payload=dataToSave||state;
+  const deletedIds=opts&&opts.deletedIds;
+  for(let attempt=0;attempt<3;attempt++){
+    const r=await saveAttempt(payload,deletedIds);
+    if(r.ok) return true;
+    if(r.retryAuth){ await recoverAuth(); continue; } // sessão caiu bem na hora de gravar: repete a tentativa
+    if(r.conflict) continue; // outra aba gravou no meio do caminho: busca e mescla tudo de novo
+    toast(r.message);
+    return false;
+  }
+  toast('Não deu para salvar: outra pessoa está salvando ao mesmo tempo. Tente de novo em alguns segundos.');
+  return false;
 }
 function save(){
   const snapshot=state;
@@ -803,7 +844,12 @@ async function enforceSessionTTL(){
   let last=0;
   try{ last=Number(localStorage.getItem(LASTSEEN_KEY)||0); }catch(e){}
   if(last&&(Date.now()-last)>SESSION_TTL){
-    await db.auth.signOut();
+    // scope:'local' -- sem isso, signOut() e 'global' por padrao no
+    // supabase-js: revoga o refresh token no servidor pra CONTA INTEIRA.
+    // Como o login e compartilhado por toda a equipe, isso derrubaria
+    // todo mundo que estivesse com o painel aberto, so porque ESTA aba
+    // ficou ociosa por tempo demais (achado real de auditoria, 2026-09-08).
+    await db.auth.signOut({scope:'local'});
   }
 }
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) touchSession(); });
@@ -834,7 +880,7 @@ async function recoverAuth(){
     reauthPromise=(async()=>{
       const {error:refreshErr}=await db.auth.refreshSession();
       if(refreshErr){
-        await db.auth.signOut();
+        await db.auth.signOut({scope:'local'}); // ver comentario em enforceSessionTTL
         await ensureAuth();
       }
     })();
@@ -1497,6 +1543,16 @@ function openDrawer(id){
   const a=state.acts.find(x=>x.id===id);
   if(!a)return;
   editing=id;
+  // Marca de quando a atividade estava assim que a gaveta abriu. Salvar
+  // (ou anexar) sempre reescreve TODOS os campos a partir do que está nos
+  // inputs — inclusive campos que ninguém tocou — porque não existe merge
+  // campo a campo. Se outra pessoa salvar essa MESMA atividade enquanto a
+  // gaveta está aberta, sem essa trava o Salvar apagaria a mudança dela
+  // silenciosamente, sem erro pra ninguém (achado real de auditoria,
+  // 2026-09-08). `let`, não `const`: avança depois de CADA salvamento
+  // nosso bem-sucedido (inclusive os do clipe), pra não bloquear o
+  // segundo anexo da mesma sessão de edição por causa do primeiro.
+  let openedTs=a._ts||0;
   // começa com pelo menos 3 linhas (ou mais, se a atividade já tiver sido
   // salva com linhas extras adicionadas via "+ linha"). cotCount cresce
   // conforme se adiciona linha; cotAnexos guarda o anexo de cada uma,
@@ -1794,11 +1850,21 @@ function openDrawer(id){
   // Limpa só o que costuma ser preenchido no dia a dia (responsável, datas,
   // andamento, orçamentos, quantidade, melhor orçamento, observação) —
   // mantém nome e fase, que identificam a atividade
-  d.querySelector('#fClear').onclick=()=>{
+  d.querySelector('#fClear').onclick=async()=>{
     d.querySelector('#fResp').value='';
     d.querySelector('#fIni').value='';
     d.querySelector('#fFim').value='';
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
+    // remove os anexos junto (antes sobreviviam ao Limpar e ficavam
+    // associados ao próximo fornecedor/valor digitado na mesma linha —
+    // achado real de auditoria, 2026-09-08)
+    for(let i=0;i<cotCount;i++){
+      if(cotAnexos[i]){
+        await db.storage.from(ATTACH_BUCKET).remove([cotAnexos[i].path]);
+        cotAnexos[i]=null;
+        renderAttachCell(i);
+      }
+    }
     d.querySelector('#fQtd').value='';
     melhorManual=false;
     d.querySelector('#fMelhor').value='';
@@ -1848,9 +1914,14 @@ function openDrawer(id){
   async function commitAnexoChange(){
     const cur=state.acts.find(x=>x.id===id);
     if(!cur){ toast('Esta atividade não existe mais.'); return false; }
+    if((cur._ts||0)>openedTs){
+      toast('Esta atividade foi atualizada por outra pessoa enquanto a gaveta estava aberta. Feche e abra de novo para ver a versão mais recente antes de anexar.');
+      return false;
+    }
     syncCurFromFields(cur);
     const ok=await saveNow(state);
-    if(!ok) toast('Não deu para salvar o anexo: tente de novo.');
+    if(ok) openedTs=cur._ts;
+    else toast('Não deu para salvar o anexo: tente de novo.');
     return ok;
   }
   // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
@@ -1859,10 +1930,14 @@ function openDrawer(id){
   async function doSave(){
     const cur=state.acts.find(x=>x.id===id);
     if(!cur){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
+    if((cur._ts||0)>openedTs){
+      toast('Esta atividade foi atualizada por outra pessoa enquanto você editava. Feche e abra de novo para ver a versão mais recente antes de salvar.');
+      return;
+    }
     saveBtn.disabled=true; saveBtn.textContent='Salvando...';
     syncCurFromFields(cur);
     const ok=await saveNow(state);
-    if(ok){ closeDrawer(); render(); }
+    if(ok){ openedTs=cur._ts; closeDrawer(); render(); }
     else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
   }
   saveBtn.onclick=doSave;
@@ -1877,6 +1952,11 @@ function openDrawer(id){
       id:alvo.id,nome:alvo.nome,fase:(PHASES[alvo.fase]&&PHASES[alvo.fase].n)||'',
       resp:alvo.resp||'',ini:alvo.ini||'',fim:alvo.fim||'',pct:alvo.pct||0,
       link:alvo.link||'',nota:alvo.nota||'',
+      // cotacoes/anexos preservados no registro de exclusão (antes eram
+      // descartados de vez, sem forma de recuperar orçamento/PDF já
+      // anexado — achado real de auditoria, 2026-09-08)
+      cotacoes:alvo.cotacoes||[],cotModo:alvo.cotModo||'orcamento',
+      melhorOrcamento:alvo.melhorOrcamento||'',quantidade:alvo.quantidade||'',
       excluidoPor:quem,excluidoEm:new Date().toISOString()
     });
     const ok=await saveNow(state,{deletedIds:new Set([id])});
@@ -2007,7 +2087,14 @@ function showGestorGate(){
         state.investimentoProteinaTs=Date.now();
         dirty=true;
       }
-      if(dirty) await saveNow(state);
+      if(dirty){
+        const ok=await saveNow(state);
+        if(!ok){
+          toast('Não deu para salvar o comentário/datas/investimento: tente de novo.');
+          go.disabled=false;go.textContent='Gerar PDF';
+          return;
+        }
+      }
       cleanup();
       resolve(val);
     };
@@ -2209,7 +2296,7 @@ document.getElementById('exp').onclick=exportCSV;
 document.getElementById('expBackup').onclick=exportBackupJSON;
 document.getElementById('pdfBtn').onclick=printPDFSummary;
 document.getElementById('signOut').onclick=async()=>{
-  await db.auth.signOut();
+  await db.auth.signOut({scope:'local'}); // ver comentario em enforceSessionTTL
   location.reload();
 };
 function syncSeg(){

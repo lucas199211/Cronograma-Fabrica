@@ -84,3 +84,16 @@ drop trigger if exists trg_cronograma_snapshot on public.cronograma_state;
 create trigger trg_cronograma_snapshot
   before update on public.cronograma_state
   for each row execute function public.cronograma_snapshot_before_write();
+
+-- O app nunca deleta essa linha (so usa upsert), e nao ha policy de RLS de
+-- DELETE pro papel 'authenticated' -- entao esse caminho ja esta bloqueado
+-- pela API publica. Mas o SQL Editor do Supabase Dashboard roda como
+-- 'postgres' e ignora RLS: um DELETE manual feito por ali (ex: alguem
+-- tentando "resetar" o cronograma) passaria batido pelo gatilho de UPDATE.
+-- Esse segundo gatilho cobre esse caso tambem. (TRUNCATE continua fora do
+-- alcance -- Postgres nao dispara gatilho por linha nesse caso -- mas e
+-- uma acao rara e deliberada, nao um caminho que o app usa.)
+drop trigger if exists trg_cronograma_snapshot_delete on public.cronograma_state;
+create trigger trg_cronograma_snapshot_delete
+  before delete on public.cronograma_state
+  for each row execute function public.cronograma_snapshot_before_write();
