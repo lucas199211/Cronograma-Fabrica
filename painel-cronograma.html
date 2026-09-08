@@ -2078,7 +2078,11 @@ function showGestorGate(){
         dirty=true;
       }
       if(newDates.some((v,i)=>v!==oldDates[i])){
-        state.roadmapDates=newDates;
+        // grava por id do marco (ver comentário em roadmapDateFor), não
+        // mais por posição no array
+        const byId={};
+        ROADMAP.forEach((m,i)=>{ byId[m.id]=newDates[i]; });
+        state.roadmapDates=byId;
         state.roadmapDatesTs=Date.now();
         dirty=true;
       }
@@ -2118,24 +2122,42 @@ const PDF_LIST_MAX=10;
 // é a mesma linha do tempo apresentada em slides pro grupo/diretoria).
 // Alterna acima/abaixo da linha, na ordem em que aparece aqui.
 const ROADMAP=[
-  {t:'Neutralizar sabor',pos:'top',data:null},
-  {t:'Validar Planta piloto',pos:'bottom',data:null},
-  {t:'Definir do local da fábrica',pos:'top',data:null},
-  {t:'Definir Layout da fábrica',pos:'bottom',data:'Out/26'},
-  {t:'Orçamento dos equipamentos',pos:'top',data:'Out/26'},
-  {t:'Definir Equipamentos',pos:'bottom',data:'Nov/26'},
-  {t:'Equalizar propostas',pos:'top',data:'Nov/26'},
-  {t:'Início das negociações',pos:'bottom',data:'Nov/26'},
-  {t:'Início das obras',pos:'top',data:'Jan/27'},
-  {t:'Final das obras',pos:'bottom',data:'Dez/27'},
-  {t:'Início da operação',pos:'top',data:'Jan/28'},
+  {id:'validar-piloto',t:'Validar Planta piloto',pos:'top',data:null},
+  {id:'definir-local',t:'Definir do local da fábrica',pos:'bottom',data:null},
+  {id:'neutralizar-sabor',t:'Neutralizar sabor',pos:'top',data:null},
+  {id:'definir-layout',t:'Definir Layout da fábrica',pos:'bottom',data:'Out/26'},
+  {id:'orcamento-equip',t:'Orçamento dos equipamentos',pos:'top',data:'Out/26'},
+  {id:'definir-equip',t:'Definir Equipamentos',pos:'bottom',data:'Nov/26'},
+  {id:'equalizar-propostas',t:'Equalizar propostas',pos:'top',data:'Nov/26'},
+  {id:'inicio-negociacoes',t:'Início das negociações',pos:'bottom',data:'Nov/26'},
+  {id:'inicio-obras',t:'Início das obras',pos:'top',data:'Jan/27'},
+  {id:'final-obras',t:'Final das obras',pos:'bottom',data:'Dez/27'},
+  {id:'inicio-operacao',t:'Início da operação',pos:'top',data:'Jan/28'},
 ];
-// Data de cada marco: usa o que a pessoa editou (state.roadmapDates,
-// salvo/sincronizado no diálogo do "Resumo PDF"), ou o valor padrão
-// embutido no ROADMAP se ainda não houver edição pra aquele índice.
+// Ordem original do ROADMAP (antes do reordenamento de 2026-09-08, quando
+// "Neutralizar sabor" saiu da posição 1 pra 3ª) -- só serve pra migrar
+// datas antigas, que tinham sido salvas por ÍNDICE de array em vez de por
+// id do marco. Não editar isso depois; é histórico fixo.
+const ROADMAP_ORIGINAL_ORDER_IDS=['neutralizar-sabor','validar-piloto','definir-local',
+  'definir-layout','orcamento-equip','definir-equip','equalizar-propostas',
+  'inicio-negociacoes','inicio-obras','final-obras','inicio-operacao'];
+// Data de cada marco: usa o que a pessoa editou (state.roadmapDates, salvo
+// pelo diálogo do "Resumo PDF"), guardado por ID do marco -- não por
+// posição no array. Guardar por posição quebrava silenciosamente toda vez
+// que a ordem dos marcos mudava: a data ficava presa ao índice antigo e
+// passava a aparecer colada no marco errado (achado real, 2026-09-08,
+// pedido pelo usuário ao reordenar "Neutralizar sabor"). Ainda lê o
+// formato antigo (array por posição) como fallback, pra não perder datas
+// já salvas antes dessa mudança.
 function roadmapDateFor(i){
-  const custom=state.roadmapDates&&state.roadmapDates[i];
-  return (custom!==undefined&&custom!==null)?custom:(ROADMAP[i].data||'');
+  const id=ROADMAP[i].id;
+  const saved=state.roadmapDates;
+  if(saved&&!Array.isArray(saved)&&saved[id]!==undefined&&saved[id]!==null) return saved[id];
+  if(saved&&Array.isArray(saved)){
+    const origIdx=ROADMAP_ORIGINAL_ORDER_IDS.indexOf(id);
+    if(origIdx>=0&&saved[origIdx]!==undefined&&saved[origIdx]!==null) return saved[origIdx];
+  }
+  return ROADMAP[i].data||'';
 }
 function buildRoadmapHTML(){
   const n=ROADMAP.length;
