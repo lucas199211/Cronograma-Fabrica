@@ -471,6 +471,7 @@ h1{
     <button class="ghost" id="onlyLate" aria-pressed="false">Só atrasadas</button>
     <button class="ghost" id="saveNow">Salvar</button>
     <button class="ghost" id="exp">Exportar CSV</button>
+    <button class="ghost" id="expBackup">Backup JSON</button>
     <button class="ghost" id="pdfBtn">Resumo PDF</button>
     <button class="ghost" id="signOut">Sair</button>
   </div>
@@ -1937,6 +1938,20 @@ function exportCSV(){
   URL.revokeObjectURL(url);
 }
 
+/* ---------- backup json ---------- */
+// Cópia local e completa do state (atividades, fases, anexos, comentário do
+// gestor, investimento etc.) — diferente do CSV, que só leva colunas da
+// tabela. Serve de rede de segurança independente do Supabase: se algo der
+// errado de novo no servidor, esse arquivo permite reconstruir o quadro na
+// mão em vez de depender de recuperar do histórico de conversa.
+function exportBackupJSON(){
+  const json=JSON.stringify(state,null,2);
+  const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
+  const a=document.createElement('a');
+  a.href=url;a.download='backup-cronograma-'+d2s(today())+'.json';a.click();
+  URL.revokeObjectURL(url);
+}
+
 /* ---------- resumo PDF ---------- */
 // Pede/edita o comentário do gestor antes de gerar (fica salvo em
 // state.comentarioGestor, sincronizado como o resto dos dados — não
@@ -2191,6 +2206,7 @@ document.getElementById('saveNow').onclick=async e=>{
   if(ok) toast('Salvo.');
 };
 document.getElementById('exp').onclick=exportCSV;
+document.getElementById('expBackup').onclick=exportBackupJSON;
 document.getElementById('pdfBtn').onclick=printPDFSummary;
 document.getElementById('signOut').onclick=async()=>{
   await db.auth.signOut();
