@@ -737,7 +737,7 @@ function mergeDeletados(local,remote){
 // gravou no meio do caminho), NAO tenta de novo com o mesmo toSave -- ele
 // ja esta calculado em cima de dado velho. Devolve {conflict:true} pra
 // quem chamou buscar tudo de novo e remontar o merge do zero.
-async function saveAttempt(payload,deletedIds){
+async function saveAttempt(payload,deletedIds,watchActId){
   let {data:remoteRow,error:selErr}=await db.from('cronograma_state').select('data,updated_at').eq('id',1).maybeSingle();
   if(selErr&&isAuthError(selErr)){
     await recoverAuth();
@@ -788,6 +788,19 @@ async function saveAttempt(payload,deletedIds){
       roadmapDates,roadmapDatesTs:Math.max(localRoadTs,remoteRoadTs),
       investimentoProteina,investimentoProteinaTs:Math.max(localInvestTs,remoteInvestTs)};
   }
+  // mergeActs troca o objeto INTEIRO de uma atividade quando o remoto tem
+  // _ts mais novo (não é merge campo a campo) -- então, numa nova
+  // tentativa por conflito, a edição de quem chamou pode ter sido trocada
+  // pela versão de outra pessoa sem que isso vire um erro (a escrita em si
+  // funciona normalmente). Sem checar isso, saveNow() dizia "salvo" mesmo
+  // quando o conteúdo do usuário não sobreviveu à mesclagem (achado real
+  // de auditoria, 2026-09-09).
+  let overwritten=false;
+  if(watchActId){
+    const mine=(payload.acts||[]).find(a=>a.id===watchActId);
+    const winner=(toSave.acts||[]).find(a=>a.id===watchActId);
+    if(mine&&winner!==mine) overwritten=true;
+  }
   const newTs=new Date().toISOString();
   let writeErr,conflict=false;
   if(remoteRow){
@@ -808,21 +821,34 @@ async function saveAttempt(payload,deletedIds){
   if(writeErr&&isAuthError(writeErr)) return {ok:false,retryAuth:true};
   if(writeErr&&!conflict) return {ok:false,message:'Não deu para salvar no servidor: '+writeErr.message};
   if(conflict) return {ok:false,conflict:true};
-  return {ok:true};
+  return {ok:true,overwritten};
 }
-async function saveNow(dataToSave,opts){
+// Versão "rica": além do boolean de sempre, devolve se a atividade que o
+// chamador está de olho (opts.watchActId) sobreviveu ao merge como a
+// própria versão dele, ou foi substituída pela de outra pessoa. Só quem
+// precisa desse detalhe (a gaveta de edição de atividade, pra não fechar
+// mostrando "salvo" quando na verdade a edição do usuário foi descartada
+// no merge) chama isso direto -- saveNow() abaixo continua devolvendo só o
+// boolean, pra não quebrar os outros lugares do arquivo que já fazem
+// `if(ok)`/`if(!ok)` esperando um boolean puro.
+async function saveNowInternal(dataToSave,opts){
   const payload=dataToSave||state;
   const deletedIds=opts&&opts.deletedIds;
+  const watchActId=opts&&opts.watchActId;
   for(let attempt=0;attempt<3;attempt++){
-    const r=await saveAttempt(payload,deletedIds);
-    if(r.ok) return true;
+    const r=await saveAttempt(payload,deletedIds,watchActId);
+    if(r.ok) return {ok:true,overwritten:!!r.overwritten};
     if(r.retryAuth){ await recoverAuth(); continue; } // sessão caiu bem na hora de gravar: repete a tentativa
     if(r.conflict) continue; // outra aba gravou no meio do caminho: busca e mescla tudo de novo
     toast(r.message);
-    return false;
+    return {ok:false};
   }
   toast('Não deu para salvar: outra pessoa está salvando ao mesmo tempo. Tente de novo em alguns segundos.');
-  return false;
+  return {ok:false};
+}
+async function saveNow(dataToSave,opts){
+  const {ok}=await saveNowInternal(dataToSave,opts);
+  return ok;
 }
 function save(){
   const snapshot=state;
@@ -1553,6 +1579,15 @@ function openDrawer(id){
   // nosso bem-sucedido (inclusive os do clipe), pra não bloquear o
   // segundo anexo da mesma sessão de edição por causa do primeiro.
   let openedTs=a._ts||0;
+  // Trava contra a própria pessoa: syncCurFromFields muta cur._ts na hora
+  // (antes do await), mas openedTs só avança DEPOIS que o salvamento
+  // termina. Sem essa trava, clicar Salvar e, enquanto ainda está em voo
+  // (agora pode demorar mais, com as até 3 tentativas do compare-and-
+  // swap), anexar um arquivo fazia commitAnexoChange comparar cur._ts (já
+  // avançado pelo Salvar em curso) contra openedTs (ainda parado) e
+  // concluir, errado, que "outra pessoa" mudou a atividade — recusando o
+  // anexo, que ficava órfão no Storage (achado real de auditoria, 2026-09-09).
+  let saving=false;
   // começa com pelo menos 3 linhas (ou mais, se a atividade já tiver sido
   // salva com linhas extras adicionadas via "+ linha"). cotCount cresce
   // conforme se adiciona linha; cotAnexos guarda o anexo de cada uma,
@@ -1912,32 +1947,43 @@ function openDrawer(id){
   // Usada pelo clipe (upload/remoção de anexo): salva na hora, sem fechar a
   // gaveta, pra dar pra continuar anexando nas outras linhas.
   async function commitAnexoChange(){
+    if(saving){ toast('Aguarde o salvamento anterior terminar.'); return false; }
     const cur=state.acts.find(x=>x.id===id);
     if(!cur){ toast('Esta atividade não existe mais.'); return false; }
     if((cur._ts||0)>openedTs){
       toast('Esta atividade foi atualizada por outra pessoa enquanto a gaveta estava aberta. Feche e abra de novo para ver a versão mais recente antes de anexar.');
       return false;
     }
+    saving=true;
     syncCurFromFields(cur);
-    const ok=await saveNow(state);
-    if(ok) openedTs=cur._ts;
+    const {ok,overwritten}=await saveNowInternal(state,{watchActId:id});
+    saving=false;
+    if(ok&&!overwritten) openedTs=cur._ts;
+    else if(ok&&overwritten) toast('Outra pessoa salvou uma alteração mais recente nesta atividade ao mesmo tempo. Feche e abra de novo para conferir antes de continuar.');
     else toast('Não deu para salvar o anexo: tente de novo.');
-    return ok;
+    return ok&&!overwritten;
   }
   // Só fecha a caixa depois que o servidor confirmar a gravação de verdade.
   // Se falhar, a caixa continua aberta com o que foi digitado — nada se perde
   // e um alerta explica o motivo, em vez de fechar silenciosamente sem salvar.
   async function doSave(){
+    if(saving){ toast('Aguarde o salvamento anterior terminar.'); return; }
     const cur=state.acts.find(x=>x.id===id);
     if(!cur){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
     if((cur._ts||0)>openedTs){
       toast('Esta atividade foi atualizada por outra pessoa enquanto você editava. Feche e abra de novo para ver a versão mais recente antes de salvar.');
       return;
     }
+    saving=true;
     saveBtn.disabled=true; saveBtn.textContent='Salvando...';
     syncCurFromFields(cur);
-    const ok=await saveNow(state);
-    if(ok){ openedTs=cur._ts; closeDrawer(); render(); }
+    const {ok,overwritten}=await saveNowInternal(state,{watchActId:id});
+    saving=false;
+    if(ok&&!overwritten){ openedTs=cur._ts; closeDrawer(); render(); }
+    else if(ok&&overwritten){
+      toast('Outra pessoa salvou uma alteração mais recente nesta atividade ao mesmo tempo. Feche e abra de novo para conferir antes de salvar de novo.');
+      saveBtn.disabled=false; saveBtn.textContent='Salvar';
+    }
     else { saveBtn.disabled=false; saveBtn.textContent='Salvar'; }
   }
   saveBtn.onclick=doSave;
@@ -2066,6 +2112,22 @@ function showGestorGate(){
     const txt=box.querySelector('#gestorTxt'),go=box.querySelector('#gestorGo'),
       cancel=box.querySelector('#gestorCancel'),saveBtn=box.querySelector('#gestorSave');
     txt.focus();txt.setSelectionRange(txt.value.length,txt.value.length);
+    // Retrato de quando a caixa abriu -- usado só pra saber o que a PESSOA
+    // de fato mudou (comparar contra o valor original que ela viu), nunca
+    // contra o `state` ao vivo. Comparar contra o state ao vivo (como era
+    // antes) fazia qualquer atualização remota que chegasse enquanto a
+    // caixa estava aberta -- mesmo em campo que a pessoa nunca tocou --
+    // ser lida como "a pessoa mudou isso" e sobrescrita com o valor
+    // congelado da caixa, revertendo silenciosamente o que outra pessoa
+    // acabara de salvar (achado real de auditoria, 2026-09-09). Igual ao
+    // openedTs da gaveta de atividade, mas aqui dá pra ser mais fino:
+    // como os marcos do roteiro são campos independentes, só reescreve os
+    // que a pessoa realmente editou -- os outros levam o valor AO VIVO
+    // (lido de novo na hora de salvar), preservando uma edição remota
+    // concorrente em vez de bloquear a caixa inteira.
+    const openedComentario=state.comentarioGestor||'';
+    const openedDates=ROADMAP.map((m,i)=>roadmapDateFor(i));
+    const openedInvest=investimentoValue();
     function cleanup(){ scrim.remove(); box.remove(); }
     cancel.onclick=()=>{ cleanup(); resolve(null); };
     scrim.onclick=()=>{ cleanup(); resolve(null); };
@@ -2076,24 +2138,27 @@ function showGestorGate(){
     // descartava tudo sem salvar nada, mesmo um comentário já digitado.
     async function persistFields(){
       const newDates=[...box.querySelectorAll('.roadDateInput')].map(inp=>inp.value.trim());
-      const oldDates=ROADMAP.map((m,i)=>roadmapDateFor(i));
       const newInvest=box.querySelector('#gestorInvest').value.trim();
       let dirty=false;
-      if(txt.value!==(state.comentarioGestor||'')){
+      if(txt.value!==openedComentario){
         state.comentarioGestor=txt.value;
         state.comentarioGestorTs=Date.now();
         dirty=true;
       }
-      if(newDates.some((v,i)=>v!==oldDates[i])){
-        // grava por id do marco (ver comentário em roadmapDateFor), não
-        // mais por posição no array
+      if(newDates.some((v,i)=>v!==openedDates[i])){
+        // grava por id do marco (ver comentário em roadmapDateFor); só
+        // troca o valor dos marcos que a pessoa de fato editou (comparado
+        // contra o retrato de abertura) -- os demais levam o valor ao
+        // vivo (roadmapDateFor lido agora), não o congelado na caixa
         const byId={};
-        ROADMAP.forEach((m,i)=>{ byId[m.id]=newDates[i]; });
+        ROADMAP.forEach((m,i)=>{
+          byId[m.id]=(newDates[i]!==openedDates[i])?newDates[i]:roadmapDateFor(i);
+        });
         state.roadmapDates=byId;
         state.roadmapDatesTs=Date.now();
         dirty=true;
       }
-      if(newInvest!==investimentoValue()){
+      if(newInvest!==openedInvest){
         state.investimentoProteina=newInvest;
         state.investimentoProteinaTs=Date.now();
         dirty=true;
