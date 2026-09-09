@@ -2054,26 +2054,33 @@ function showGestorGate(){
       <h3>Resumo PDF</h3>
       <p class="title">Comentário do gestor</p>
       <div class="f"><textarea id="gestorTxt" placeholder="Observações gerais sobre o andamento do projeto, pra aparecer no relatório">${esc(state.comentarioGestor||'')}</textarea></div>
+      <div style="display:flex;justify-content:flex-end;margin:-6px 0 14px;">
+        <button class="ghost" id="gestorSave" type="button">Salvar</button>
+      </div>
       <p class="title" style="font-size:13px;margin-top:20px">Datas do roteiro</p>
       <div class="roadDatesGrid">${roadFieldsHTML}</div>
       <p class="title" style="font-size:13px;margin-top:20px">Investimentos — Projeto Proteína</p>
       <div class="f"><input id="gestorInvest" value="${esc(investimentoValue())}" placeholder="ex: R$ 370.698,00"></div>
       <div class="acts"><button class="solid" id="gestorGo" type="button">Gerar PDF</button><button class="ghost" id="gestorCancel" type="button">Cancelar</button></div>`;
     document.body.appendChild(scrim);document.body.appendChild(box);
-    const txt=box.querySelector('#gestorTxt'),go=box.querySelector('#gestorGo'),cancel=box.querySelector('#gestorCancel');
+    const txt=box.querySelector('#gestorTxt'),go=box.querySelector('#gestorGo'),
+      cancel=box.querySelector('#gestorCancel'),saveBtn=box.querySelector('#gestorSave');
     txt.focus();txt.setSelectionRange(txt.value.length,txt.value.length);
     function cleanup(){ scrim.remove(); box.remove(); }
     cancel.onclick=()=>{ cleanup(); resolve(null); };
     scrim.onclick=()=>{ cleanup(); resolve(null); };
-    go.onclick=async()=>{
-      go.disabled=true;go.textContent='Gerando...';
-      const val=txt.value;
+    // Compartilhada entre "Salvar" (só grava e fecha, sem gerar PDF -- pra
+    // quem ainda não tem toda informação e precisa sair da página sem
+    // perder o que já digitou) e "Gerar PDF" (grava e segue pro relatório).
+    // Antes só existia o caminho de "Gerar PDF"; Cancelar/clicar fora
+    // descartava tudo sem salvar nada, mesmo um comentário já digitado.
+    async function persistFields(){
       const newDates=[...box.querySelectorAll('.roadDateInput')].map(inp=>inp.value.trim());
       const oldDates=ROADMAP.map((m,i)=>roadmapDateFor(i));
       const newInvest=box.querySelector('#gestorInvest').value.trim();
       let dirty=false;
-      if(val!==(state.comentarioGestor||'')){
-        state.comentarioGestor=val;
+      if(txt.value!==(state.comentarioGestor||'')){
+        state.comentarioGestor=txt.value;
         state.comentarioGestorTs=Date.now();
         dirty=true;
       }
@@ -2091,13 +2098,22 @@ function showGestorGate(){
         state.investimentoProteinaTs=Date.now();
         dirty=true;
       }
-      if(dirty){
-        const ok=await saveNow(state);
-        if(!ok){
-          toast('Não deu para salvar o comentário/datas/investimento: tente de novo.');
-          go.disabled=false;go.textContent='Gerar PDF';
-          return;
-        }
+      return dirty?await saveNow(state):true;
+    }
+    saveBtn.onclick=async()=>{
+      saveBtn.disabled=true;saveBtn.textContent='Salvando...';
+      const ok=await persistFields();
+      if(ok){ toast('Salvo.'); cleanup(); resolve(null); }
+      else{ saveBtn.disabled=false;saveBtn.textContent='Salvar'; }
+    };
+    go.onclick=async()=>{
+      go.disabled=true;go.textContent='Gerando...';
+      const val=txt.value;
+      const ok=await persistFields();
+      if(!ok){
+        toast('Não deu para salvar o comentário/datas/investimento: tente de novo.');
+        go.disabled=false;go.textContent='Gerar PDF';
+        return;
       }
       cleanup();
       resolve(val);
