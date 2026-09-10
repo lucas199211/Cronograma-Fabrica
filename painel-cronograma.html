@@ -472,6 +472,7 @@ h1{
     <button class="ghost" id="saveNow">Salvar</button>
     <button class="ghost" id="exp">Exportar CSV</button>
     <button class="ghost" id="expBackup">Backup JSON</button>
+    <button class="ghost" id="histBtn">Histórico</button>
     <button class="ghost" id="pdfBtn">Resumo PDF</button>
     <button class="ghost" id="signOut">Sair</button>
   </div>
@@ -2191,12 +2192,148 @@ function exportCSV(){
 // tabela. Serve de rede de segurança independente do Supabase: se algo der
 // errado de novo no servidor, esse arquivo permite reconstruir o quadro na
 // mão em vez de depender de recuperar do histórico de conversa.
-function exportBackupJSON(){
-  const json=JSON.stringify(state,null,2);
+function exportBackupJSON(data,prefix){
+  const json=JSON.stringify(data||state,null,2);
   const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
   const a=document.createElement('a');
-  a.href=url;a.download='backup-cronograma-'+d2s(today())+'.json';a.click();
+  a.href=url;a.download=(prefix||'backup-cronograma-')+d2s(today())+'.json';a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ---------- histórico de backups / restaurar ---------- */
+// Lê os snapshots guardados por hora (ver supabase-setup.sql,
+// cronograma_state_history) e permite restaurar um deles. Diferente do
+// salvamento normal (que MESCLA por _ts, dado mais novo vence sempre),
+// restaurar aqui SUBSTITUI tudo de propósito -- é assim que "voltar no
+// tempo" tem que funcionar; passar pelo merge normal faria o dado atual
+// (mais novo) vencer quase tudo, anulando a restauração. Por ser a ação
+// mais destrutiva do painel inteiro, baixa um backup do estado atual
+// antes de perguntar qualquer coisa, e exige a mesma confirmação forte
+// (nome + senha da equipe) já usada pra excluir uma atividade.
+async function fetchHistorySnapshots(){
+  const {data,error}=await db.from('cronograma_state_history')
+    .select('snapshot_hour,data').eq('state_id',1)
+    .order('snapshot_hour',{ascending:false}).limit(200);
+  if(error){ toast('Não deu para carregar o histórico: '+error.message); return null; }
+  return data||[];
+}
+function fmtSnapshotHour(iso){
+  const d=new Date(iso);
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+'h';
+}
+// Compare-and-swap igual ao de saveNow, mas gravando o snapshot inteiro
+// sem passar pelo merge por _ts (de propósito -- ver comentário acima).
+async function restoreFromSnapshot(snapshotData){
+  for(let attempt=0;attempt<2;attempt++){
+    const {data:remoteRow,error:selErr}=await db.from('cronograma_state').select('updated_at').eq('id',1).maybeSingle();
+    if(selErr) return {ok:false,message:'Não deu para confirmar o servidor: '+selErr.message};
+    const {data:updRows,error}=await db.from('cronograma_state')
+      .update({data:snapshotData,updated_at:new Date().toISOString()})
+      .eq('id',1).eq('updated_at',remoteRow&&remoteRow.updated_at)
+      .select('id');
+    if(error) return {ok:false,message:'Não deu para restaurar: '+error.message};
+    if(updRows&&updRows.length) return {ok:true};
+    // conflito: alguém salvou algo no exato instante -- tenta mais uma vez
+  }
+  return {ok:false,message:'Alguém salvou algo bem nesse instante. Tente restaurar de novo.'};
+}
+// Confirmação da restauração: mesmo padrão do showDeleteGate (nome +
+// senha da equipe), mas com o aviso do que está em jogo aqui é MUITO
+// maior (todo o cronograma, não uma atividade só).
+function showRestoreConfirmGate(snapHourLabel){
+  return new Promise(resolve=>{
+    const scrim=document.createElement('div');scrim.className='scrim';
+    const box=document.createElement('div');box.className='drawer gate';
+    box.innerHTML=`
+      <h3>Restaurar backup</h3>
+      <p class="title">Voltar para ${esc(snapHourLabel)}</p>
+      <p style="font-size:12px;color:var(--t3);margin:-4px 0 10px;">Isso substitui TUDO que está salvo agora. Qualquer atividade, orçamento ou comentário lançado depois dessa hora será perdido (uma cópia do estado atual acabou de ser baixada pro seu computador, caso precise).</p>
+      <div class="f"><label>Quem está restaurando?</label><input id="restQuem" list="restQuemList" placeholder="seu nome">
+        <datalist id="restQuemList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+      </div>
+      <div class="f"><label>Senha da equipe</label><input type="password" id="restPwd" placeholder="senha"></div>
+      <div class="acts"><button class="danger" id="restGo" type="button">Restaurar</button><button class="ghost" id="restCancel" type="button">Cancelar</button></div>
+      <p class="gateErr" id="restErr"></p>`;
+    document.body.appendChild(scrim);document.body.appendChild(box);
+    const quem=box.querySelector('#restQuem'),pwd=box.querySelector('#restPwd'),err=box.querySelector('#restErr'),
+          go=box.querySelector('#restGo'),cancel=box.querySelector('#restCancel');
+    quem.focus();
+    function cleanup(){ scrim.remove(); box.remove(); }
+    cancel.onclick=()=>{ cleanup(); resolve(null); };
+    scrim.onclick=()=>{ cleanup(); resolve(null); };
+    async function tryConfirm(){
+      const quemVal=quem.value.trim();
+      if(!quemVal){ err.textContent='Diz quem está restaurando.'; quem.focus(); return; }
+      go.disabled=true;err.textContent='';
+      const ok=await verifyTeamPassword(pwd.value);
+      if(!ok){
+        err.textContent='Senha incorreta.';
+        pwd.value='';pwd.focus();go.disabled=false;
+        return;
+      }
+      cleanup();
+      resolve(quemVal);
+    }
+    go.onclick=tryConfirm;
+    quem.onkeydown=e=>{ if(e.key==='Enter') pwd.focus(); };
+    pwd.onkeydown=e=>{ if(e.key==='Enter') tryConfirm(); };
+  });
+}
+function showHistoryGate(){
+  return new Promise(resolve=>{
+    const scrim=document.createElement('div');scrim.className='scrim';
+    const box=document.createElement('div');box.className='drawer gate wide';
+    box.innerHTML=`<h3>Histórico de backups</h3><p class="title">Carregando…</p>`;
+    document.body.appendChild(scrim);document.body.appendChild(box);
+    function cleanup(){ scrim.remove(); box.remove(); }
+    scrim.onclick=()=>{ cleanup(); resolve(); };
+    (async()=>{
+      const snaps=await fetchHistorySnapshots();
+      if(!snaps){ cleanup(); resolve(); return; }
+      if(!snaps.length){
+        box.innerHTML=`<h3>Histórico de backups</h3><p>Ainda não há nenhum backup guardado — o primeiro aparece depois da próxima alteração salva.</p><div class="acts"><button class="ghost" id="histClose" type="button">Fechar</button></div>`;
+        box.querySelector('#histClose').onclick=()=>{ cleanup(); resolve(); };
+        return;
+      }
+      const rowsHTML=snaps.map((s,i)=>{
+        const n=(s.data&&s.data.acts&&s.data.acts.length)||0;
+        return `<div class="f tight" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <span>${esc(fmtSnapshotHour(s.snapshot_hour))} · ${n} atividades</span>
+          <button class="ghost histRestore" data-i="${i}" type="button">Restaurar esta versão</button>
+        </div>`;
+      }).join('');
+      box.innerHTML=`<h3>Histórico de backups</h3>
+        <p style="font-size:12px;color:var(--t3);margin-bottom:10px;">Uma cópia por hora, guardada automaticamente. Restaurar substitui TUDO que está salvo agora.</p>
+        <div style="max-height:400px;overflow:auto;display:flex;flex-direction:column;gap:6px;">${rowsHTML}</div>
+        <div class="acts"><button class="ghost" id="histClose" type="button">Fechar</button></div>`;
+      box.querySelector('#histClose').onclick=()=>{ cleanup(); resolve(); };
+      box.querySelectorAll('.histRestore').forEach(btn=>{
+        btn.onclick=async()=>{
+          const snap=snaps[Number(btn.dataset.i)];
+          const label=fmtSnapshotHour(snap.snapshot_hour);
+          // rede de segurança mesmo que a pessoa erre a hora ou desista
+          // no meio: baixa o estado ATUAL antes de perguntar qualquer coisa
+          exportBackupJSON(state,'backup-antes-de-restaurar-');
+          const quem=await showRestoreConfirmGate(label);
+          if(!quem) return;
+          btn.disabled=true;btn.textContent='Restaurando...';
+          const r=await restoreFromSnapshot(snap.data);
+          if(r.ok){
+            state=snap.data;
+            PHASES=state.phases;
+            toast('Restaurado para '+label+'.');
+            cleanup();
+            render();
+            resolve();
+          }else{
+            toast(r.message);
+            btn.disabled=false;btn.textContent='Restaurar esta versão';
+          }
+        };
+      });
+    })();
+  });
 }
 
 /* ---------- resumo PDF ---------- */
@@ -2517,7 +2654,8 @@ document.getElementById('saveNow').onclick=async e=>{
   if(ok) toast('Salvo.');
 };
 document.getElementById('exp').onclick=exportCSV;
-document.getElementById('expBackup').onclick=exportBackupJSON;
+document.getElementById('expBackup').onclick=()=>exportBackupJSON();
+document.getElementById('histBtn').onclick=showHistoryGate;
 document.getElementById('pdfBtn').onclick=printPDFSummary;
 document.getElementById('signOut').onclick=async()=>{
   await db.auth.signOut({scope:'local'}); // ver comentario em enforceSessionTTL
