@@ -51,11 +51,17 @@ create policy "authenticated can delete anexos" on storage.objects
 -- direto no Postgres, entao protege ate contra um bug no painel (como o
 -- que causou a perda de 21/08) -- nao depende do JS do app rodar certo.
 
+-- current_date usa o fuso da sessao do Postgres, que em projetos Supabase
+-- e UTC por padrao -- uma edicao feita entre ~21h e 23h59 (horario de
+-- Brasilia, UTC-3) ja cairia no "dia seguinte" em UTC, deslocando a
+-- fronteira do snapshot diario em ate 3h em relacao ao expediente real da
+-- equipe (achado real de auditoria, 2026-09-10). Usa o fuso de Brasilia
+-- explicitamente em vez de depender do fuso da sessao.
 create table if not exists public.cronograma_state_history (
   id bigserial primary key,
   state_id int not null,
   data jsonb not null,
-  snapshot_date date not null default current_date,
+  snapshot_date date not null default ((now() at time zone 'America/Sao_Paulo')::date),
   created_at timestamptz not null default now(),
   unique (state_id, snapshot_date)
 );
@@ -66,6 +72,14 @@ drop policy if exists "authenticated can read history" on public.cronograma_stat
 create policy "authenticated can read history" on public.cronograma_state_history
   for select using (auth.role() = 'authenticated');
 
+-- IMPORTANTE (achado real de auditoria, 2026-09-10): a versao anterior
+-- desta funcao sempre terminava com "return new" -- mas em contexto de
+-- DELETE, NEW e NULL, e um gatilho BEFORE ROW que devolve NULL CANCELA a
+-- operacao pra aquela linha (comportamento documentado do Postgres). Ou
+-- seja, o gatilho de DELETE criado mais abaixo nunca de fato excluia a
+-- linha: virava um no-op silencioso (o UPDATE continuava funcionando
+-- normalmente, so o DELETE que ficava neutralizado). Corrigido pra
+-- devolver OLD em contexto de DELETE.
 create or replace function public.cronograma_snapshot_before_write()
 returns trigger
 language plpgsql
@@ -74,8 +88,11 @@ set search_path = public
 as $$
 begin
   insert into public.cronograma_state_history(state_id, data, snapshot_date)
-  values (old.id, old.data, current_date)
+  values (old.id, old.data, (now() at time zone 'America/Sao_Paulo')::date)
   on conflict (state_id, snapshot_date) do nothing;
+  if TG_OP = 'DELETE' then
+    return old;
+  end if;
   return new;
 end;
 $$;

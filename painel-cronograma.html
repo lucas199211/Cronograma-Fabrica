@@ -839,7 +839,16 @@ async function saveNowInternal(dataToSave,opts){
     const r=await saveAttempt(payload,deletedIds,watchActId);
     if(r.ok) return {ok:true,overwritten:!!r.overwritten};
     if(r.retryAuth){ await recoverAuth(); continue; } // sessão caiu bem na hora de gravar: repete a tentativa
-    if(r.conflict) continue; // outra aba gravou no meio do caminho: busca e mescla tudo de novo
+    if(r.conflict){
+      // pequena pausa (com variação aleatória) antes de tentar de novo --
+      // sem isso, várias abas que colidiram no mesmo instante (ex: os
+      // timers de autosave de 60s de uma sala cheia de gente, quase
+      // sincronizados) tendem a colidir de novo na tentativa seguinte
+      // também, quase em lockstep, esgotando as 3 tentativas sem
+      // necessidade (achado real de auditoria, 2026-09-10)
+      await new Promise(res=>setTimeout(res,150+Math.random()*350));
+      continue; // outra aba gravou no meio do caminho: busca e mescla tudo de novo
+    }
     toast(r.message);
     return {ok:false};
   }
@@ -856,8 +865,17 @@ function save(){
   saveT=setTimeout(()=>saveNow(snapshot),350);
 }
 // Salvamento periódico de segurança: garante persistência mesmo se algum
-// fluxo de edição não tiver chamado save() corretamente
-setInterval(()=>saveNow(state),60000);
+// fluxo de edição não tiver chamado save() corretamente. Jitter (55-75s
+// em vez de exatamente 60s) espalha o disparo entre abas abertas quase
+// juntas (ex: todo mundo abrindo o painel no início de uma reunião) --
+// sem isso, os timers ficavam praticamente sincronizados entre abas e
+// toda rodada tinha várias gravações colidindo ao mesmo tempo, batendo
+// nas 3 tentativas do compare-and-swap com mais frequência do que
+// precisava (achado real de auditoria, 2026-09-10).
+function scheduleAutosave(){
+  setTimeout(()=>{ saveNow(state); scheduleAutosave(); },55000+Math.random()*20000);
+}
+scheduleAutosave();
 
 /* ============================ autenticação ============================ */
 const LASTSEEN_KEY='cronograma-planta-lastseen';
@@ -1019,6 +1037,20 @@ const X=(t0,d)=>diffD(t0,d)*zoom;
 
 /* ============================ render ============================ */
 function render(){
+  // Renomear uma fase, criar atividade ("+ atividade") e criar grupo
+  // ("+ novo grupo de atividades") abrem um <input> direto dentro de
+  // #main -- fora da gaveta protegida. Um render() disparado de fora
+  // (o handler de tempo real chama render() incondicionalmente pra
+  // QUALQUER salvamento de QUALQUER pessoa, inclusive o autosave
+  // periódico de 60s da própria aba) reconstruía #main do zero e apagava
+  // esse campo com o texto ainda não confirmado, sem nenhum aviso
+  // (achado real de auditoria, 2026-09-10). Enter/Escape/clicar fora
+  // desses campos já chamam render() sozinhos quando a pessoa termina --
+  // então é seguro só adiar (pular) um render externo enquanto o campo
+  // segue com foco: nada fica preso pra sempre, porque blur sempre
+  // dispara mais cedo ou mais tarde.
+  const ae=document.activeElement;
+  if(ae&&(ae.classList.contains('phaseNameInput')||ae.classList.contains('addinput'))) return;
   document.getElementById('stamp').textContent=
     'atualizado '+fmt(d2s(today()))+' · '+state.acts.length+' atividades';
   updateFlowstrip();
@@ -1600,6 +1632,17 @@ function openDrawer(id){
   // nosso bem-sucedido (inclusive os do clipe), pra não bloquear o
   // segundo anexo da mesma sessão de edição por causa do primeiro.
   let openedTs=a._ts||0;
+  // O <select> de Fase é montado com os rótulos/índices de PHASES só na
+  // abertura da gaveta (mais abaixo) e nunca é reconstruído enquanto ela
+  // fica aberta. Se moveGroup() reordenar os grupos nesse meio-tempo (a
+  // atividade sendo editada pode nem fazer parte da troca, então
+  // openedTs acima não pega isso), o índice de uma opção que a pessoa
+  // escolher pode já significar um grupo diferente do rótulo que ela viu
+  // (achado real de auditoria, 2026-09-10). openedFase/openedPhasesTs
+  // guardam o necessário pra detectar isso só quando importa: quando a
+  // pessoa de fato mexeu no campo Fase.
+  const openedFase=a.fase;
+  const openedPhasesTs=state.phasesTs||0;
   // Trava contra a própria pessoa: syncCurFromFields muta cur._ts na hora
   // (antes do await), mas openedTs só avança DEPOIS que o salvamento
   // termina. Sem essa trava, clicar Salvar e, enquanto ainda está em voo
@@ -1997,6 +2040,15 @@ function openDrawer(id){
     pendingRemovedAnexos=[];
     await Promise.all(paths.map(p=>db.storage.from(ATTACH_BUCKET).remove([p])));
   }
+  // A pessoa mexeu no dropdown de Fase (escolheu algo diferente do que
+  // estava selecionado na abertura) DEPOIS que os grupos foram
+  // reordenados por outra ação? Se sim, o índice escolhido pode já
+  // significar um grupo diferente do rótulo que ela viu -- recusa em vez
+  // de arriscar mover a atividade pro grupo errado silenciosamente.
+  function faseDropdownStale(){
+    const chosen=Number(d.querySelector('#fFase').value);
+    return chosen!==openedFase&&(state.phasesTs||0)>openedPhasesTs;
+  }
   // Usada pelo clipe (upload/remoção de anexo): salva na hora, sem fechar a
   // gaveta, pra dar pra continuar anexando nas outras linhas.
   async function commitAnexoChange(){
@@ -2005,6 +2057,10 @@ function openDrawer(id){
     if(!cur){ toast('Esta atividade não existe mais.'); return false; }
     if((cur._ts||0)>openedTs){
       toast('Esta atividade foi atualizada por outra pessoa enquanto a gaveta estava aberta. Feche e abra de novo para ver a versão mais recente antes de anexar.');
+      return false;
+    }
+    if(faseDropdownStale()){
+      toast('Os grupos foram reordenados enquanto você editava. Feche e abra de novo antes de mudar a fase desta atividade.');
       return false;
     }
     saving=true;
@@ -2027,6 +2083,10 @@ function openDrawer(id){
       toast('Esta atividade foi atualizada por outra pessoa enquanto você editava. Feche e abra de novo para ver a versão mais recente antes de salvar.');
       return;
     }
+    if(faseDropdownStale()){
+      toast('Os grupos foram reordenados enquanto você editava. Feche e abra de novo antes de mudar a fase desta atividade.');
+      return;
+    }
     saving=true;
     saveBtn.disabled=true; saveBtn.textContent='Salvando...';
     syncCurFromFields(cur);
@@ -2041,14 +2101,22 @@ function openDrawer(id){
   }
   saveBtn.onclick=doSave;
   d.querySelector('#fDel').onclick=async()=>{
-    const alvo=state.acts.find(x=>x.id===id);
-    if(!alvo){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
-    const quem=await showDeleteGate(alvo.nome);
+    const pre=state.acts.find(x=>x.id===id);
+    if(!pre){ toast('Esta atividade não existe mais.'); closeDrawer(); return; }
+    const quem=await showDeleteGate(pre.nome);
     if(!quem) return;
+    // Relê a atividade depois do diálogo (que fica esperando a pessoa
+    // digitar nome+senha, às vezes por minutos) em vez de usar o "pre"
+    // capturado antes -- se alguém salvou uma edição concorrente nessa
+    // MESMA atividade nesse meio-tempo (ex: anexou uma cotação), usar o
+    // snapshot velho perderia essa edição pra sempre no tombstone, já que
+    // a exclusão é o único lugar que sobra pra esses dados (achado real
+    // de auditoria, 2026-09-10).
+    const alvo=state.acts.find(x=>x.id===id)||pre;
     state.acts=state.acts.filter(x=>x.id!==id);
     state.deletados=state.deletados||[];
     state.deletados.push({
-      id:alvo.id,nome:alvo.nome,fase:(PHASES[alvo.fase]&&PHASES[alvo.fase].n)||'',
+      id:alvo.id,nome:alvo.nome,fase:phaseObj(alvo).n||'',
       resp:alvo.resp||'',ini:alvo.ini||'',fim:alvo.fim||'',pct:alvo.pct||0,
       link:alvo.link||'',nota:alvo.nota||'',
       // cotacoes/anexos preservados no registro de exclusão (antes eram
