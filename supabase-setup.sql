@@ -84,25 +84,13 @@ alter table public.cronograma_state_history
   alter column snapshot_hour set not null;
 alter table public.cronograma_state_history
   alter column snapshot_hour set default date_trunc('hour', now());
--- remove a trava antiga de "1x por dia" -- procura pelo nome real da
--- constraint em vez de adivinhar (o Postgres gera esse nome sozinho),
--- pra nao arriscar deixar a trava velha ativa por engano: se ela
--- continuasse ali, o 2o backup de cada dia falharia com erro de banco e
--- destruiria (por estar num gatilho BEFORE) o UPDATE/DELETE junto.
-do $$
-declare
-  conname text;
-begin
-  select con.conname into conname
-  from pg_constraint con
-  join pg_class rel on rel.oid = con.conrelid
-  where rel.relname = 'cronograma_state_history'
-    and con.contype = 'u'
-    and pg_get_constraintdef(con.oid) like '%snapshot_date%';
-  if conname is not null then
-    execute format('alter table public.cronograma_state_history drop constraint %I', conname);
-  end if;
-end $$;
+-- remove a trava antiga de "1x por dia" (nome padrao que o Postgres gera
+-- sozinho pra "unique (state_id, snapshot_date)" declarado na criacao da
+-- tabela) -- se ela continuasse ali, o 2o backup de cada dia falharia com
+-- erro de banco e destruiria (por estar num gatilho BEFORE) o
+-- UPDATE/DELETE junto.
+alter table public.cronograma_state_history
+  drop constraint if exists cronograma_state_history_state_id_snapshot_date_key;
 alter table public.cronograma_state_history
   drop constraint if exists cronograma_state_history_state_id_snapshot_hour_key;
 alter table public.cronograma_state_history
