@@ -2280,6 +2280,45 @@ function showRestoreConfirmGate(snapHourLabel){
     pwd.onkeydown=e=>{ if(e.key==='Enter') tryConfirm(); };
   });
 }
+// Trava de ACESSO ao Histórico: pede a senha da equipe antes mesmo de
+// mostrar a lista de backups -- não só na hora de restaurar. Reduz o
+// risco de alguém abrir por curiosidade/clique errado e acabar
+// restaurando uma versão antiga sem ter certeza do que está fazendo
+// (pedido explícito do usuário, 2026-09-10). A confirmação de nome+senha
+// na hora de restaurar (showRestoreConfirmGate) continua existindo por
+// cima disso, como segunda camada -- é ela que registra quem restaurou.
+function showHistoryAccessGate(){
+  return new Promise(resolve=>{
+    const scrim=document.createElement('div');scrim.className='scrim';
+    const box=document.createElement('div');box.className='drawer gate';
+    box.innerHTML=`
+      <h3>Histórico de backups</h3>
+      <p style="font-size:12px;color:var(--t3);margin:-4px 0 10px;">Essa área permite voltar o cronograma inteiro pra uma hora anterior. Confirme a senha da equipe pra continuar.</p>
+      <div class="f"><label>Senha da equipe</label><input type="password" id="histAccPwd" placeholder="senha"></div>
+      <div class="acts"><button class="solid" id="histAccGo" type="button">Entrar</button><button class="ghost" id="histAccCancel" type="button">Cancelar</button></div>
+      <p class="gateErr" id="histAccErr"></p>`;
+    document.body.appendChild(scrim);document.body.appendChild(box);
+    const pwd=box.querySelector('#histAccPwd'),err=box.querySelector('#histAccErr'),
+          go=box.querySelector('#histAccGo'),cancel=box.querySelector('#histAccCancel');
+    pwd.focus();
+    function cleanup(){ scrim.remove(); box.remove(); }
+    cancel.onclick=()=>{ cleanup(); resolve(false); };
+    scrim.onclick=()=>{ cleanup(); resolve(false); };
+    async function tryGo(){
+      go.disabled=true;err.textContent='';
+      const ok=await verifyTeamPassword(pwd.value);
+      if(!ok){
+        err.textContent='Senha incorreta.';
+        pwd.value='';pwd.focus();go.disabled=false;
+        return;
+      }
+      cleanup();
+      resolve(true);
+    }
+    go.onclick=tryGo;
+    pwd.onkeydown=e=>{ if(e.key==='Enter') tryGo(); };
+  });
+}
 function showHistoryGate(){
   return new Promise(resolve=>{
     const scrim=document.createElement('div');scrim.className='scrim';
@@ -2655,7 +2694,10 @@ document.getElementById('saveNow').onclick=async e=>{
 };
 document.getElementById('exp').onclick=exportCSV;
 document.getElementById('expBackup').onclick=()=>exportBackupJSON();
-document.getElementById('histBtn').onclick=showHistoryGate;
+document.getElementById('histBtn').onclick=async()=>{
+  const ok=await showHistoryAccessGate();
+  if(ok) showHistoryGate();
+};
 document.getElementById('pdfBtn').onclick=printPDFSummary;
 document.getElementById('signOut').onclick=async()=>{
   await db.auth.signOut({scope:'local'}); // ver comentario em enforceSessionTTL
