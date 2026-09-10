@@ -1083,6 +1083,27 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 // grupo na hora. Ao trocar a posição de dois grupos, precisa também trocar
 // esse índice em todas as atividades que apontavam pra eles — senão as
 // atividades "pulam" de grupo ao reordenar.
+//
+// Como a.fase é só um índice (não um id estável), duas pessoas criando um
+// grupo novo quase ao mesmo tempo -- ou qualquer merge que descarte o
+// array de fases de um lado inteiro (saveAttempt escolhe o phases mais
+// recente por timestamp, o array INTEIRO de um lado só) -- podem deixar
+// uma atividade com a.fase apontando pra um índice que não existe mais,
+// ou que agora é outro grupo (achado real de auditoria, 2026-09-10; a
+// correção completa exigiria dar id estável a cada grupo, uma migração
+// maior que ainda não foi feita). effFase() é a rede de segurança: garante
+// que toda atividade sempre caia num índice válido de PHASES pra
+// renderizar -- sem isso, um índice fora da faixa fazia PHASES[a.fase]
+// ser undefined e o render() inteiro quebrava pra TODA a equipe (a
+// próxima atualização em tempo real propagava o erro pra todo mundo
+// conectado). Atividades "órfãs" (índice inválido) caem visivelmente no
+// último grupo, em vez de sumir ou quebrar a tela -- ainda erradas, mas
+// visíveis e corrigíveis a mão.
+function effFase(a){
+  const i=a.fase;
+  return (typeof i==='number'&&i>=0&&i<PHASES.length)?i:Math.max(0,PHASES.length-1);
+}
+function phaseObj(a){ return PHASES[effFase(a)]||{n:'Sem grupo',c:'#8C2E2A'}; }
 function moveGroup(pi,dir){
   const ni=pi+dir;
   if(ni<0||ni>=PHASES.length) return;
@@ -1180,7 +1201,7 @@ function buildTimeline(){
 
   let total=0;
   PHASES.forEach((ph,pi)=>{
-    let list=state.acts.filter(a=>a.fase===pi);
+    let list=state.acts.filter(a=>effFase(a)===pi);
     if(onlyLate) list=list.filter(a=>statusOf(a)==='atrasado');
     if(onlyLate&&!list.length) return;
     total+=list.length;
@@ -1509,11 +1530,11 @@ function buildBoard(){
       const st=statusOf(a);
       const card=document.createElement('div');
       card.className='card'+(st==='atrasado'?' late':'');
-      card.style.borderLeftColor=PHASES[a.fase].c;
+      card.style.borderLeftColor=phaseObj(a).c;
       card.draggable=true;
       card.dataset.id=a.id;
       card.innerHTML=`<div class="t">${esc(a.nome)}${hasAnexo(a)?` <span class="cardAnexo" title="Tem anexo de orçamento">${PAPERCLIP_SVG}</span>`:''}${hasNota(a)?` <span class="cardNota">${FLAG_SVG}<span class="tip">${esc(a.nota)}</span></span>`:''}</div>
-        <div class="m"><span>${esc(PHASES[a.fase].n)}</span>
+        <div class="m"><span>${esc(phaseObj(a).n)}</span>
         ${a.resp?'<span>'+esc(a.resp)+'</span>':''}
         <span class="${st==='atrasado'?'d':''}">${st==='atrasado'?lateDays(a)+'d de atraso':(a.fim?'até '+fmt(a.fim):'sem data')}</span></div>`;
       card.onclick=()=>openDrawer(a.id);
@@ -1588,6 +1609,14 @@ function openDrawer(id){
   // concluir, errado, que "outra pessoa" mudou a atividade — recusando o
   // anexo, que ficava órfão no Storage (achado real de auditoria, 2026-09-09).
   let saving=false;
+  // Caminhos de anexo que "Limpar" removeu da tela mas cuja exclusão real
+  // no Storage só é efetivada se/quando esse Salvar for confirmado --
+  // igual aos outros campos que "Limpar" reseta (Responsável, datas,
+  // etc.), que só valem de verdade depois de Salvar. Antes, "Limpar"
+  // apagava o arquivo do bucket na hora, mesmo que a pessoa fechasse a
+  // gaveta sem salvar -- destruindo o anexo pra sempre sem nenhuma
+  // gravação confirmando a remoção (achado real de auditoria, 2026-09-10).
+  let pendingRemovedAnexos=[];
   // começa com pelo menos 3 linhas (ou mais, se a atividade já tiver sido
   // salva com linhas extras adicionadas via "+ linha"). cotCount cresce
   // conforme se adiciona linha; cotAnexos guarda o anexo de cada uma,
@@ -1853,6 +1882,18 @@ function openDrawer(id){
       const anexo=cotAnexos[i];
       if(!anexo) return;
       if(!confirm('Remover o anexo "'+anexo.nome+'"?')) return;
+      // Confere a trava ANTES de apagar o arquivo de verdade do Storage --
+      // antes, a ordem era invertida: apagava primeiro e só depois
+      // descobria (dentro de commitAnexoChange) que não dava pra salvar,
+      // deixando o arquivo destruído sem nenhuma gravação registrando a
+      // remoção (achado real de auditoria, 2026-09-10).
+      if(saving){ toast('Aguarde o salvamento anterior terminar.'); return; }
+      const curNow=state.acts.find(x=>x.id===id);
+      if(!curNow){ toast('Esta atividade não existe mais.'); return; }
+      if((curNow._ts||0)>openedTs){
+        toast('Esta atividade foi atualizada por outra pessoa enquanto a gaveta estava aberta. Feche e abra de novo para ver a versão mais recente antes de remover o anexo.');
+        return;
+      }
       rm.disabled=true;
       await db.storage.from(ATTACH_BUCKET).remove([anexo.path]);
       cotAnexos[i]=null;
@@ -1892,10 +1933,12 @@ function openDrawer(id){
     [...d.querySelectorAll('.cotForn,.cotValor')].forEach(x=>x.value='');
     // remove os anexos junto (antes sobreviviam ao Limpar e ficavam
     // associados ao próximo fornecedor/valor digitado na mesma linha —
-    // achado real de auditoria, 2026-09-08)
+    // achado real de auditoria, 2026-09-08). Só marca pra apagar do
+    // Storage de verdade quando o Salvar confirmar -- ver
+    // pendingRemovedAnexos e o final de doSave().
     for(let i=0;i<cotCount;i++){
       if(cotAnexos[i]){
-        await db.storage.from(ATTACH_BUCKET).remove([cotAnexos[i].path]);
+        pendingRemovedAnexos.push(cotAnexos[i].path);
         cotAnexos[i]=null;
         renderAttachCell(i);
       }
@@ -1944,6 +1987,16 @@ function openDrawer(id){
     cur.nota=d.querySelector('#fNota').value;
     cur._ts=Date.now();
   }
+  // Apaga de verdade, no Storage, os anexos que "Limpar" marcou pra
+  // remover -- só chamada depois que um salvamento confirma de verdade a
+  // remoção (ver pendingRemovedAnexos). Fica pendurado sem efeito nenhum
+  // se a pessoa fechar a gaveta sem salvar.
+  async function flushPendingRemovedAnexos(){
+    if(!pendingRemovedAnexos.length) return;
+    const paths=pendingRemovedAnexos;
+    pendingRemovedAnexos=[];
+    await Promise.all(paths.map(p=>db.storage.from(ATTACH_BUCKET).remove([p])));
+  }
   // Usada pelo clipe (upload/remoção de anexo): salva na hora, sem fechar a
   // gaveta, pra dar pra continuar anexando nas outras linhas.
   async function commitAnexoChange(){
@@ -1958,7 +2011,7 @@ function openDrawer(id){
     syncCurFromFields(cur);
     const {ok,overwritten}=await saveNowInternal(state,{watchActId:id});
     saving=false;
-    if(ok&&!overwritten) openedTs=cur._ts;
+    if(ok&&!overwritten){ openedTs=cur._ts; await flushPendingRemovedAnexos(); }
     else if(ok&&overwritten) toast('Outra pessoa salvou uma alteração mais recente nesta atividade ao mesmo tempo. Feche e abra de novo para conferir antes de continuar.');
     else toast('Não deu para salvar o anexo: tente de novo.');
     return ok&&!overwritten;
@@ -1979,7 +2032,7 @@ function openDrawer(id){
     syncCurFromFields(cur);
     const {ok,overwritten}=await saveNowInternal(state,{watchActId:id});
     saving=false;
-    if(ok&&!overwritten){ openedTs=cur._ts; closeDrawer(); render(); }
+    if(ok&&!overwritten){ openedTs=cur._ts; await flushPendingRemovedAnexos(); closeDrawer(); render(); }
     else if(ok&&overwritten){
       toast('Outra pessoa salvou uma alteração mais recente nesta atividade ao mesmo tempo. Feche e abra de novo para conferir antes de salvar de novo.');
       saveBtn.disabled=false; saveBtn.textContent='Salvar';
@@ -2054,7 +2107,7 @@ function closeDrawer(){
 function exportCSV(){
   const rows=[['Fase','Atividade','Responsável','Início','Prazo','%','Status','Dias de atraso','Observação']];
   state.acts.forEach(a=>rows.push([
-    PHASES[a.fase].n,a.nome,a.resp||'',a.ini||'',a.fim||'',(a.pct||0),
+    phaseObj(a).n,a.nome,a.resp||'',a.ini||'',a.fim||'',(a.pct||0),
     statusOf(a),lateDays(a),(a.nota||'').replace(/\n/g,' ')
   ]));
   const csv='\uFEFF'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\n');
@@ -2279,7 +2332,7 @@ function buildPDFSummary(comentario){
   const c1=pFeito,c2=c1+pAnd,c3=c2+pAtr;
   const donutBg=`conic-gradient(#163D34 0% ${c1}%,#BC933F ${c1}% ${c2}%,#8C2E2A ${c2}% ${c3}%,#D8D4CB ${c3}% 100%)`;
   const grupos=PHASES.map((ph,pi)=>{
-    const list=A.filter(a=>a.fase===pi);
+    const list=A.filter(a=>effFase(a)===pi);
     const done=list.filter(a=>(a.pct||0)>=100).length;
     const pct=list.length?Math.round(list.reduce((s,a)=>s+(a.pct||0),0)/list.length):0;
     return{nome:ph.n,done,total:list.length,pct};
