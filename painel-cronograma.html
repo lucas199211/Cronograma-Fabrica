@@ -2483,18 +2483,13 @@ function showGestorGate(){
 }
 // Monta uma página condensada (donut de status, comentário do gestor,
 // avanço por grupo em barras, atrasadas e em andamento) em vez de listar
-// as ~100 atividades uma a uma — o objetivo é caber a leitura em 1-2
-// páginas. Limita cada lista a um tamanho razoável (com uma linha "+N não
-// listadas") pra não estourar isso caso um dia existam muitas
-// atrasadas/em andamento ao mesmo tempo. Usa o diálogo de impressão do
-// navegador (sem biblioteca de PDF): a pessoa escolhe "Salvar como PDF"
-// no destino. O donut é CSS puro (conic-gradient), sem lib de gráfico.
-// Baixado de 20 pra 15, e depois pra 10: agora que avanço por grupo,
-// atrasadas e em andamento sempre começam do zero na página 2 (ver
-// .pdfPageBreak), sobra menos espaço pra "em andamento" nessa mesma
-// página — com muitos grupos cadastrados, 15 linhas ainda estourava
-// pra uma 3ª página.
-const PDF_LIST_MAX=10;
+// as ~100 atividades uma a uma. Usa o diálogo de impressão do navegador
+// (sem biblioteca de PDF): a pessoa escolhe "Salvar como PDF" no destino.
+// O donut é CSS puro (conic-gradient), sem lib de gráfico. As listas de
+// atrasadas/em andamento mostram TODAS as atividades, sem limite — antes
+// cortava em 10 com uma linha "+N não listadas", mas isso impedia
+// conferir a lista inteira (pedido do usuário, 2026-09-11); agora o
+// relatório pode passar de 1-2 páginas se houver muitas atividades.
 // Roteiro fixo do projeto (marcos de alto nível, não vem de state.acts —
 // é a mesma linha do tempo apresentada em slides pro grupo/diretoria).
 // Alterna acima/abaixo da linha, na ordem em que aparece aqui.
@@ -2586,12 +2581,7 @@ function buildPDFSummary(comentario){
       <span class="pdfBarTrack"><span class="pdfBarFill" style="width:${g.pct}%"></span></span>
       <span class="pdfBarPct">${g.done}/${g.total} · ${g.pct}%</span>
     </div>`).join('');
-  const listRows=(list,fields)=>{
-    const shown=list.slice(0,PDF_LIST_MAX).map(fields).join('');
-    const extra=list.length>PDF_LIST_MAX
-      ?`<tr><td colspan="4">+ ${list.length-PDF_LIST_MAX} não listadas</td></tr>`:'';
-    return shown+extra;
-  };
+  const listRows=(list,fields)=>list.map(fields).join('');
   const rowsLate=listRows(late,a=>
     `<tr><td>${esc(a.nome)}</td><td>${esc(a.resp||'—')}</td><td>${lateDays(a)}d</td><td>${fmt(a.fim)}</td></tr>`);
   const rowsRunning=listRows(running,a=>
@@ -2600,7 +2590,7 @@ function buildPDFSummary(comentario){
     <div class="pdfBrand"><img src="${LOGO_PLUMA_B64}" alt="Pluma Agroavícola"><span class="div"></span><img src="${LOGO_FORUS_B64}" alt="Grupo Forus"></div>
     <h1>Cronograma da planta — resumo gerencial</h1>
     <div class="pdfDonutWrap">
-      <div class="pdfDonut" style="background:${donutBg}"><div class="hole"><div class="v">${overallPct(A)}%</div><div class="k">avanço geral</div></div></div>
+      <div class="pdfDonut" style="background:${donutBg}"><div class="hole"><div class="k">avanço geral</div></div></div>
       <div class="pdfLegend">
         <div><span class="sw" style="background:#163D34"></span>Concluídas — ${feito.length} (${pFeito}%)</div>
         <div><span class="sw" style="background:#BC933F"></span>Em andamento — ${running.length} (${pAnd}%)</div>
