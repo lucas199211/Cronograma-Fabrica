@@ -532,6 +532,12 @@ const COLLAPSEKEY='cronograma-planta-collapsed';
 const SUPABASE_URL='https://jupjmqoykgwdrhyfcoem.supabase.co';
 const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1cGptcW95a2d3ZHJoeWZjb2VtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwMzAxNzksImV4cCI6MjEwMDYwNjE3OX0.6AhhkPl9jAnL71Rta7YxroVFOjYH9KTwyaiGrQI1-lo';
 const SHARED_EMAIL='equipe@cronograma.local';
+// Login separado, só pro Lucas, usado exclusivamente pra restaurar um
+// backup (pedido explícito, 2026-09-14: só o Lucas pode restaurar).
+// Precisa existir no Supabase (Authentication > Users > Add user) com
+// esse e-mail e uma senha que só o Lucas saiba -- diferente da senha da
+// equipe, que todo mundo usa pra entrar no painel no dia a dia.
+const LUCAS_EMAIL='lucas@cronograma.local';
 const ATTACH_BUCKET='anexos';
 const PAPERCLIP_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 015 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>';
 const FLAG_SVG='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>';
@@ -975,6 +981,14 @@ function showGate(){
 async function verifyTeamPassword(pwd){
   const check=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
   const {error}=await check.auth.signInWithPassword({email:SHARED_EMAIL,password:pwd});
+  return !error;
+}
+// Mesma ideia de verifyTeamPassword, mas contra a conta separada do
+// Lucas -- usada só pra restaurar um backup do Histórico, que precisa
+// ficar restrito só a ele (pedido explícito, 2026-09-14).
+async function verifyLucasPassword(pwd){
+  const check=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {error}=await check.auth.signInWithPassword({email:LUCAS_EMAIL,password:pwd});
   return !error;
 }
 // Gaveta de confirmação de exclusão: pede quem está excluindo (fica no
@@ -2237,9 +2251,13 @@ async function restoreFromSnapshot(snapshotData){
   }
   return {ok:false,message:'Alguém salvou algo bem nesse instante. Tente restaurar de novo.'};
 }
-// Confirmação da restauração: mesmo padrão do showDeleteGate (nome +
-// senha da equipe), mas com o aviso do que está em jogo aqui é MUITO
-// maior (todo o cronograma, não uma atividade só).
+// Confirmação da restauração: pede a senha SEPARADA do Lucas (não a da
+// equipe) -- restaurar é a ação mais destrutiva do painel inteiro (troca
+// TUDO que está salvo), e por pedido explícito (2026-09-14) só o Lucas
+// pode fazer isso. Antes também pedia "quem está restaurando" digitado
+// livre, mas esse texto não era gravado em lugar nenhum (só servia pra
+// não deixar o campo vazio) -- agora que a própria senha já prova quem
+// é, esse campo saiu. Resolve com true (confirmado) ou null (cancelado).
 function showRestoreConfirmGate(snapHourLabel){
   return new Promise(resolve=>{
     const scrim=document.createElement('div');scrim.className='scrim';
@@ -2247,35 +2265,29 @@ function showRestoreConfirmGate(snapHourLabel){
     box.innerHTML=`
       <h3>Restaurar backup</h3>
       <p class="title">Voltar para ${esc(snapHourLabel)}</p>
-      <p style="font-size:12px;color:var(--t3);margin:-4px 0 10px;">Isso substitui TUDO que está salvo agora. Qualquer atividade, orçamento ou comentário lançado depois dessa hora será perdido (uma cópia do estado atual acabou de ser baixada pro seu computador, caso precise).</p>
-      <div class="f"><label>Quem está restaurando?</label><input id="restQuem" list="restQuemList" placeholder="seu nome">
-        <datalist id="restQuemList">${RESP_SUGESTOES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
-      </div>
-      <div class="f"><label>Senha da equipe</label><input type="password" id="restPwd" placeholder="senha"></div>
+      <p style="font-size:12px;color:var(--t3);margin:-4px 0 10px;">Isso substitui TUDO que está salvo agora. Qualquer atividade, orçamento ou comentário lançado depois dessa hora será perdido (uma cópia do estado atual acabou de ser baixada pro seu computador, caso precise). Só o Lucas pode confirmar essa ação.</p>
+      <div class="f"><label>Senha do Lucas</label><input type="password" id="restPwd" placeholder="senha"></div>
       <div class="acts"><button class="danger" id="restGo" type="button">Restaurar</button><button class="ghost" id="restCancel" type="button">Cancelar</button></div>
       <p class="gateErr" id="restErr"></p>`;
     document.body.appendChild(scrim);document.body.appendChild(box);
-    const quem=box.querySelector('#restQuem'),pwd=box.querySelector('#restPwd'),err=box.querySelector('#restErr'),
+    const pwd=box.querySelector('#restPwd'),err=box.querySelector('#restErr'),
           go=box.querySelector('#restGo'),cancel=box.querySelector('#restCancel');
-    quem.focus();
+    pwd.focus();
     function cleanup(){ scrim.remove(); box.remove(); }
     cancel.onclick=()=>{ cleanup(); resolve(null); };
     scrim.onclick=()=>{ cleanup(); resolve(null); };
     async function tryConfirm(){
-      const quemVal=quem.value.trim();
-      if(!quemVal){ err.textContent='Diz quem está restaurando.'; quem.focus(); return; }
       go.disabled=true;err.textContent='';
-      const ok=await verifyTeamPassword(pwd.value);
+      const ok=await verifyLucasPassword(pwd.value);
       if(!ok){
         err.textContent='Senha incorreta.';
         pwd.value='';pwd.focus();go.disabled=false;
         return;
       }
       cleanup();
-      resolve(quemVal);
+      resolve(true);
     }
     go.onclick=tryConfirm;
-    quem.onkeydown=e=>{ if(e.key==='Enter') pwd.focus(); };
     pwd.onkeydown=e=>{ if(e.key==='Enter') tryConfirm(); };
   });
 }
@@ -2353,8 +2365,8 @@ function showHistoryGate(){
           // rede de segurança mesmo que a pessoa erre a hora ou desista
           // no meio: baixa o estado ATUAL antes de perguntar qualquer coisa
           exportBackupJSON(state,'backup-antes-de-restaurar-');
-          const quem=await showRestoreConfirmGate(label);
-          if(!quem) return;
+          const confirmed=await showRestoreConfirmGate(label);
+          if(!confirmed) return;
           btn.disabled=true;btn.textContent='Restaurando...';
           const r=await restoreFromSnapshot(snap.data);
           if(r.ok){
