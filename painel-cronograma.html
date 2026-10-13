@@ -1282,9 +1282,18 @@ function buildTimeline(){
         if(e.key==='Enter'){
           const v=inp.value.trim();
           if(v){ ph.n=v; state.phasesTs=Date.now(); }
-          save();render();
+          save();
+          // Chama blur() em vez de render() direto: nesse instante o
+          // próprio "inp" ainda é document.activeElement, e o guard do
+          // início de render() (pra não apagar digitação em andamento
+          // quando chega um salvamento de outra pessoa) bloquearia esse
+          // render tirando efeito -- a mudança ficava só na memória,
+          // sem aparecer na tela, e apertar Enter de novo com o mesmo
+          // texto duplicava (achado real do usuário, 2026-10-13). blur()
+          // tira o foco antes, e o onblur abaixo é quem de fato redesenha.
+          inp.blur();
         }
-        if(e.key==='Escape') render();
+        if(e.key==='Escape') inp.blur();
       };
       inp.onblur=()=>render();
     };
@@ -1387,9 +1396,15 @@ function buildTimeline(){
         inp.onkeydown=e=>{
           if(e.key==='Enter'&&inp.value.trim()){
             state.acts.push({id:uid(),fase:pi,nome:inp.value.trim(),resp:'',ini:'',fim:'',pct:0,nota:'',_ts:Date.now()});
-            save();render();
+            save();
+            // blur() em vez de render() direto -- ver comentário igual
+            // no rename de fase, mesma causa (achado real do usuário,
+            // 2026-10-13): "inp" ainda é activeElement aqui, e o guard de
+            // render() bloqueava silenciosamente, fazendo a atividade
+            // nova ficar só salva sem aparecer, e Enter repetido duplicar.
+            inp.blur();
           }
-          if(e.key==='Escape') render();
+          if(e.key==='Escape') inp.blur();
         };
         inp.onblur=()=>render();
       };
@@ -1415,9 +1430,13 @@ function buildTimeline(){
         if(e.key==='Enter'&&inp.value.trim()){
           PHASES.push({n:inp.value.trim(),c:PALETTE[PHASES.length%PALETTE.length]});
           state.phasesTs=Date.now();
-          save();render();
+          save();
+          // blur() em vez de render() direto -- mesma causa das outras
+          // duas (achado real do usuário, 2026-10-13): ver comentário no
+          // rename de fase.
+          inp.blur();
         }
-        if(e.key==='Escape') render();
+        if(e.key==='Escape') inp.blur();
       };
       inp.onblur=()=>render();
     };
