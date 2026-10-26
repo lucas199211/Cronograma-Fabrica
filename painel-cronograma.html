@@ -20,6 +20,7 @@
   --line-2:#E4E1DB;
   --hazard-a:#122B25;
   --hazard-b:#BC933F;
+  --standby:#3D5A80;
   --p0:#163D34; --p1:#284735; --p2:#3B5036; --p3:#4D5A38; --p4:#606339;
   --p5:#726D3A; --p6:#85763B; --p7:#97803D; --p8:#AA893E; --p9:#BC933F;
   --rail:250px;
@@ -262,6 +263,8 @@ h1{
 .card.late{border-left-color:var(--hazard-a)!important;background:
   linear-gradient(var(--panel),var(--panel)) padding-box}
 .card.late .m .d{color:#8C2E2A;font-weight:600}
+.card.standby{border-left-color:var(--standby)!important}
+.card.standby .m .d{color:var(--standby);font-weight:600}
 
 /* ---------- excluídos ---------- */
 .delRow{
@@ -655,6 +658,10 @@ function melhorTotalDoGrupo(list){
 
 /* ============================ status ============================ */
 function statusOf(a){
+  // standby vem antes de tudo: é uma pausa deliberada, feita a mão pela
+  // pessoa -- não faz sentido continuar contando como atrasada/em
+  // andamento enquanto estiver marcada assim.
+  if(a.standby) return 'standby';
   if(!a.ini||!a.fim) return 'semdata';
   if((a.pct||0)>=100) return 'feito';
   if(s2d(a.fim)<today()) return 'atrasado';
@@ -1348,15 +1355,17 @@ function buildTimeline(){
         const minW=textW(iniTxt)+textW(fimTxt)+28;
         const w=Math.max(dateW,minW);
         const bar=document.createElement('div');
-        bar.className='bar'+(st==='atrasado'?' late':'');
+        bar.className='bar'+(st==='atrasado'?' late':'')+(st==='standby'?' standby':'');
         bar.style.left=x+'px';bar.style.width=w+'px';
         bar.dataset.id=a.id;
         if(st!=='atrasado'){
           // 100% concluída usa o verde Pluma (--ink, a mesma cor da logo);
-          // o resto continua no cinza neutro de sempre
-          const barColor=st==='feito'?'var(--ink)':'var(--ink-2)';
+          // standby usa um tom azulado, pra diferenciar de longe de
+          // atrasada (amarelo/preto) e em andamento (cinza) -- pedido do
+          // usuário, 2026-10-26; o resto continua no cinza neutro de sempre
+          const barColor=st==='feito'?'var(--ink)':st==='standby'?'var(--standby)':'var(--ink-2)';
           bar.style.borderColor=barColor;
-          bar.style.background=st==='feito'?'#163D3422':'#626A6822';
+          bar.style.background=st==='feito'?'#163D3422':st==='standby'?'#3D5A8022':'#626A6822';
           const f=document.createElement('div');
           f.className='fill';f.style.background=barColor;f.style.width=(a.pct||0)+'%';
           f.style.opacity=st==='feito'?'1':'.85';
@@ -1594,14 +1603,14 @@ function buildBoard(){
     list.forEach(a=>{
       const st=statusOf(a);
       const card=document.createElement('div');
-      card.className='card'+(st==='atrasado'?' late':'');
-      card.style.borderLeftColor=phaseObj(a).c;
+      card.className='card'+(st==='atrasado'?' late':'')+(st==='standby'?' standby':'');
+      card.style.borderLeftColor=st==='standby'?'':phaseObj(a).c;
       card.draggable=true;
       card.dataset.id=a.id;
       card.innerHTML=`<div class="t">${esc(a.nome)}${hasAnexo(a)?` <span class="cardAnexo" title="Tem anexo de orçamento">${PAPERCLIP_SVG}</span>`:''}${hasNota(a)?` <span class="cardNota">${FLAG_SVG}<span class="tip">${esc(a.nota)}</span></span>`:''}</div>
         <div class="m"><span>${esc(phaseObj(a).n)}</span>
         ${a.resp?'<span>'+esc(a.resp)+'</span>':''}
-        <span class="${st==='atrasado'?'d':''}">${st==='atrasado'?lateDays(a)+'d de atraso':(a.fim?'até '+fmt(a.fim):'sem data')}</span></div>`;
+        <span class="${(st==='atrasado'||st==='standby')?'d':''}">${st==='atrasado'?lateDays(a)+'d de atraso':st==='standby'?'Em standby':(a.fim?'até '+fmt(a.fim):'sem data')}</span></div>`;
       card.onclick=()=>openDrawer(a.id);
       card.ondragstart=e=>{e.dataTransfer.setData('text/plain',a.id)};
       col.appendChild(card);
@@ -1761,6 +1770,12 @@ function openDrawer(id){
     <div class="f"><label>Andamento</label><div class="pcts" id="fPct">
       ${[0,25,50,75,100].map(v=>`<button type="button" data-v="${v}" aria-pressed="${(a.pct||0)===v}">${v}%</button>`).join('')}
     </div></div>
+    <div class="f tight" style="display:flex;align-items:center;">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;letter-spacing:normal;cursor:pointer;">
+        <input type="checkbox" id="fStandby" ${a.standby?'checked':''} style="width:auto;border:none;background:transparent;padding:0;">
+        Em standby (pausada)
+      </label>
+    </div>
     <div class="f"><label>Arquivos</label>
       <div class="cotModeSeg" id="fCotMode">
         <button type="button" data-m="orcamento" aria-pressed="${cotModo==='orcamento'}">Orçamentos</button>
@@ -2026,6 +2041,7 @@ function openDrawer(id){
     d.querySelector('#fNota').value='';
     pct=0;
     [...d.querySelectorAll('#fPct button')].forEach(x=>x.setAttribute('aria-pressed',Number(x.dataset.v)===0));
+    d.querySelector('#fStandby').checked=false;
     d.querySelector('#fResp').focus();
   };
   const saveBtn=d.querySelector('#fSave');
@@ -2049,6 +2065,7 @@ function openDrawer(id){
     cur.fim=parseDateField(d.querySelector('#fFim').value,cur.fim);
     if(cur.ini&&cur.fim&&s2d(cur.fim)<s2d(cur.ini)) cur.fim=cur.ini;
     cur.pct=pct;
+    cur.standby=d.querySelector('#fStandby').checked;
     cur.cotModo=cotModo;
     cur.quantidade=d.querySelector('#fQtd').value.trim();
     cur.cotacoes=Array.from({length:cotCount},(_,i)=>({
