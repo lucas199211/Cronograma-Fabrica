@@ -88,6 +88,24 @@ h1{
 .railcol{flex:0 0 var(--rail);width:var(--rail);background:var(--panel);border-right:1px solid var(--line)}
 .scroller{overflow-x:auto;overflow-y:visible;position:relative;overscroll-behavior-x:contain;flex:1;min-width:0}
 .track{position:relative;min-width:100%}
+#main:has(.timeNav){padding-bottom:52px}
+.timeNav{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;align-items:center;gap:8px;
+  padding:6px 10px;background:var(--panel-2);border-top:1px solid var(--line);
+  box-shadow:0 -2px 6px rgba(0,0,0,.06);
+}
+.tnBtn{
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:5px 10px;cursor:pointer;white-space:nowrap;flex:0 0 auto;
+}
+.tnBtn:hover{background:var(--ink);color:#fff}
+.tnBar{flex:1;min-width:0;overflow-x:scroll;overflow-y:hidden;height:16px}
+.tnInner{height:1px}
+.tnBar::-webkit-scrollbar{height:12px}
+.tnBar::-webkit-scrollbar-track{background:var(--line-2)}
+.tnBar::-webkit-scrollbar-thumb{background:var(--ink-2);border-radius:6px}
+.tnBar::-webkit-scrollbar-thumb:hover{background:var(--ink)}
 .tlhead{
   position:sticky;top:0;z-index:30;background:var(--panel-2);
   border-bottom:1px solid var(--line);height:38px;
@@ -1198,6 +1216,10 @@ function moveActTo(actId,targetPi,beforeActId){
   save();render();
 }
 
+// recalcula a barra de navegação da linha do tempo atual (a de cada
+// render() substitui a anterior -- um listener só, em vez de um por render)
+let timeNavRefit=null;
+window.addEventListener('resize',()=>{ if(timeNavRefit) timeNavRefit(); });
 function buildTimeline(){
   const {t0,t1,days}=span();
   const W=days*zoom;
@@ -1530,7 +1552,51 @@ function buildTimeline(){
     moveActTo(e.dataTransfer.getData('text/plain'),target.targetPi,target.beforeActId);
   });
   attachDrag(wrap,t0);
-  return outer;
+
+  // Barra de navegação fixa no rodapé da tela. A rolagem horizontal real
+  // fica no fim do .scroller -- com dezenas de atividades, ela ficava lá
+  // embaixo, fora da vista, e não dava pra perceber que existia passado
+  // ou futuro pra ver (pedido do usuário, 2026-11-05). Esta barra espelha
+  // a mesma rolagem (sincronizada nos dois sentidos) e fica sempre
+  // visível, com atalhos pra voltar/avançar e pular pra hoje.
+  const nav=document.createElement('div');
+  nav.className='timeNav';
+  nav.innerHTML=`<button type="button" class="tnBtn" data-dir="-1" title="Ver atividades passadas">◀ Passado</button>
+    <div class="tnBar"><div class="tnInner"></div></div>
+    <button type="button" class="tnBtn" data-today="1" title="Voltar para hoje">Hoje</button>
+    <button type="button" class="tnBtn" data-dir="1" title="Ver atividades futuras">Futuro ▶</button>`;
+  const bar=nav.querySelector('.tnBar'), inner=nav.querySelector('.tnInner');
+  let syncing=false;
+  const fitInner=()=>{ inner.style.width=(wrap.scrollWidth/Math.max(1,wrap.clientWidth))*bar.clientWidth+'px'; };
+  const fromWrap=()=>{
+    if(syncing) return; syncing=true;
+    const max=wrap.scrollWidth-wrap.clientWidth, bmax=bar.scrollWidth-bar.clientWidth;
+    bar.scrollLeft=max>0?wrap.scrollLeft/max*bmax:0;
+    syncing=false;
+  };
+  const fromBar=()=>{
+    if(syncing) return; syncing=true;
+    const max=wrap.scrollWidth-wrap.clientWidth, bmax=bar.scrollWidth-bar.clientWidth;
+    wrap.scrollLeft=bmax>0?bar.scrollLeft/bmax*max:0;
+    syncing=false;
+  };
+  wrap.addEventListener('scroll',fromWrap);
+  bar.addEventListener('scroll',fromBar);
+  nav.querySelectorAll('.tnBtn').forEach(b=>b.onclick=()=>{
+    if(b.dataset.today){
+      wrap.scrollTo({left:Math.max(0,X(t0,today())-wrap.clientWidth*0.25),behavior:'smooth'});
+    }else{
+      wrap.scrollBy({left:Number(b.dataset.dir)*wrap.clientWidth*0.8,behavior:'smooth'});
+    }
+  });
+  // mede depois que o elemento entrou na página (antes disso a largura é 0)
+  timeNavRefit=()=>{ fitInner(); fromWrap(); };
+  requestAnimationFrame(timeNavRefit);
+
+  const frag=document.createDocumentFragment();
+  frag.appendChild(outer);
+  frag.appendChild(nav);
+  return frag;
 }
 
 /* ---------- arrastar ---------- */
